@@ -6,6 +6,9 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $toolRoot = Join-Path $projectRoot '.tools'
+$env:TEMP = Join-Path $toolRoot 'tmp'
+$env:TMP = $env:TEMP
+New-Item -ItemType Directory -Path $env:TEMP -Force | Out-Null
 $downloadRoot = Join-Path $toolRoot 'downloads'
 $jdkRoot = Join-Path $toolRoot 'jdk17'
 $sdkRoot = Join-Path $toolRoot 'android-sdk'

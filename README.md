@@ -89,6 +89,33 @@ adb shell am start -n com.example.aiaccounting/.MainActivity
 
 v0.2 已在 API 31 真机上通过 5 项自动化测试，并检查实际首页和原生键盘显示。测试配置固定保留已安装 APK，避免测试结束后默认卸载 App。数据库与 Compose 测试使用独立账本，原生窗口测试不保存测试记录。
 
+## 电脑上的模拟器测试
+
+无需 Android Studio。首次准备官方模拟器和 Android 12 / API 31 x86_64 镜像：
+
+```powershell
+.\scripts\setup-emulator.ps1 -AcceptSdkLicenses
+```
+
+Windows 需要启用 Windows Hypervisor Platform。若硬件加速检查不通过，在管理员 PowerShell 中运行 `scripts\enable-emulator-acceleration.ps1`，保存工作后重启电脑。脚本不会自动重启。已完成下载和虚拟手机创建的电脑无需重新下载。
+
+完成后，一条命令即可启动虚拟手机、构建和安装 APK，并运行单元测试、lint 与设备测试：
+
+```powershell
+.\scripts\test-emulator.ps1
+# 需要看到虚拟手机窗口时：
+.\scripts\test-emulator.ps1 -ShowWindow
+```
+
+默认在后台运行，设备操作固定指向 `Accounting_API_31` / `emulator-5556`。结果与截图保存在 `.tools/test-results/`，启动日志在 `.tools/logs/`。测试后虚拟手机继续运行，可用下面的命令关闭：
+
+```powershell
+. .\scripts\environment.ps1
+adb -s emulator-5556 emu kill
+```
+
+SDK、系统镜像、AVD、Gradle/Kotlin 缓存、模拟器设置及工具临时文件均配置到项目 `.tools/`。环境脚本仅修改当前终端及子进程，不更改 Windows 全局临时目录。ADB 的授权文件另需保留原内容；配置记录见 [模拟器环境验证](docs/emulator-environment.md)。模拟器用于常规回归，重要版本仍需真机验收。
+
 ## 目录结构
 
 ```text
