@@ -1,0 +1,155 @@
+# AI 记账
+
+个人使用的 Android 原生 App。v0.2 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，实现本地手动记账。
+
+首版工具链及欢迎页已经过构建和真机验证，记录见 [初始环境验证](docs/verification.md)。v0.2 的构建、测试和真机验证单独记录在 [本版验证记录](docs/verification-v0.2.md)，避免把首版结果当作新版验证。
+
+## 构建环境
+
+不需要 Android Studio。项目使用独立的 JDK 17、Android SDK 和 Gradle Wrapper，工具及下载缓存位于 `.tools/`，不修改系统 Java 配置。
+
+| 组件 | 版本 |
+| --- | --- |
+| JDK | Eclipse Temurin 17.0.20.1 |
+| Gradle Wrapper | 8.13 |
+| Android Gradle Plugin | 8.13.2 |
+| Kotlin / Compose 编译插件 | 2.3.21 |
+| Compose BOM | 2025.12.01 |
+| Activity Compose | 1.12.1 |
+| Room / KSP | 2.8.5 / 2.3.10 |
+| Lifecycle | 2.10.0 |
+| SDK 命令行工具 | 19.0 |
+| SDK Platform | Android 36 |
+| SDK Build Tools | 35.0.0 |
+| SDK Platform Tools / adb | 37.0.1 / 1.0.41 |
+| 最低 / 目标 Android API | 26 / 36 |
+
+JDK 用于运行 Gradle 和 Android 构建工具；应用代码使用 Kotlin。
+
+## 使用 PowerShell 构建
+
+在项目根目录运行：
+
+```powershell
+# 第一次配置工具。此参数代表授权接受所需 Android SDK 许可证。
+.\scripts\setup-tools.ps1 -AcceptSdkLicenses
+
+# 构建 Debug APK。
+.\scripts\build.ps1
+
+# 构建并执行 Android 静态检查。
+.\scripts\build.ps1 :app:assembleDebug :app:lintDebug
+
+# 金额与统计单元测试，以及 Android 测试包构建。
+.\scripts\build.ps1 :app:testDebugUnitTest :app:assembleDebugAndroidTest
+
+# 手机连接后，运行使用独立测试数据库的自动化验证。
+.\scripts\build.ps1 :app:connectedDebugAndroidTest
+```
+
+如果需要本地 HTTP 代理，可以在配置时指定：
+
+```powershell
+.\scripts\setup-tools.ps1 -AcceptSdkLicenses -ProxyUrl http://127.0.0.1:7890
+```
+
+代理设置仅保存在本项目 `.tools/network.json` 和项目内 Gradle 缓存中，不修改 Windows 系统代理。`build.ps1` 会检查已配置代理的端口；代理未运行时，本次构建通过参数临时关闭 Gradle 代理，并启用阿里云公共 Google Maven 镜像，只下载 Android 官方依赖。原代理配置保留，开启代理后会继续使用它。标准 Wrapper 直接调用不包含这项回退。
+
+也可以在当前终端加载项目环境后直接使用标准 Wrapper：
+
+```powershell
+. .\scripts\environment.ps1
+.\gradlew.bat --version
+.\gradlew.bat :app:assembleDebug
+```
+
+首次执行 Wrapper 会下载对应 Gradle。后续使用项目内的 Gradle 缓存。
+
+APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。这是使用本机调试签名的 Debug 包，适合个人测试。
+
+若系统阻止运行 PowerShell 脚本，可以仅为这一次进程指定执行策略，无需修改全局配置：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build.ps1
+```
+
+## 真机测试
+
+在手机上开启开发者选项和 USB 调试，用支持数据传输的 USB 线连接电脑，并在手机上确认电脑的调试授权。
+
+```powershell
+. .\scripts\environment.ps1
+adb devices -l
+adb shell getprop ro.build.version.sdk
+adb install -r .\app\build\outputs\apk\debug\app-debug.apk
+adb shell am start -n com.example.aiaccounting/.MainActivity
+```
+
+电脑构建通过后，仍需用真机确认安装及页面显示；首次连接以 adb 实际返回的设备状态和 Android API 级别为准。若 adb 未识别设备，再检查数据线、USB 模式及设备厂商的 USB 驱动。
+
+v0.2 已在 API 31 真机上通过 5 项自动化测试，并检查实际首页和原生键盘显示。测试配置固定保留已安装 APK，避免测试结束后默认卸载 App。数据库与 Compose 测试使用独立账本，原生窗口测试不保存测试记录。
+
+## 目录结构
+
+```text
+app/
+  build.gradle.kts
+  src/main/
+    AndroidManifest.xml
+    java/com/example/aiaccounting/
+      MainActivity.kt
+      AccountingApplication.kt
+      data/
+        local/                # Room 数据库、记录与分类实体、DAO
+        repository/           # 数据校验、事务、汇总快照与备份
+      domain/model/           # 收支类型、金额与草稿
+      ui/
+        AccountingApp.kt      # 页面切换、导航、保存与反馈
+        LedgerViewModel.kt     # Flow 状态、操作与草稿
+        common/               # 本地图标、月份选择与概览
+        home/                 # 月度明细
+        entry/                # 新增和编辑记录
+        category/             # 分类管理
+        statistics/           # 分类排行
+        settings/             # 本机数据与备份入口
+        theme/                # Compose 主题
+    res/                      # 文本、启动图标、系统主题
+gradle/
+  libs.versions.toml           # 统一版本配置
+  wrapper/                    # 标准 Gradle Wrapper
+scripts/
+  setup-tools.ps1              # 下载、校验、配置工具
+  environment.ps1              # 当前终端的项目环境
+  build.ps1                    # 构建入口
+docs/
+  development.md              # 后续开发边界
+.tools/                       # 本机工具及缓存，不进入版本控制
+```
+
+本机 SDK 路径记录在 `local.properties`，该文件不进入版本控制。工具、缓存和构建产物也已加入 `.gitignore`。
+
+## 当前范围
+
+已实现：
+
+- 单账本、人民币；支出与收入的新增、编辑、删除、撤销。
+- 月份切换、按日期分组、支出 / 收入 / 净收支汇总。
+- 一级分类的新增、改名、换图标与颜色、排序、停用和恢复。
+- 无历史记录的分类可删除；已有记录的分类只能停用。兜底分类保留。
+- 分类排行与占比，点击分类查看当月明细；停用分类仍计入历史统计。
+- Room 本机持久化、系统深色主题、输入草稿保留及放弃修改提示。
+- 通过 Android 系统文件选择器导出完整 JSON 备份，包括分类和软删除记录。当前没有导入恢复入口。
+
+正式 App 不注入示例账目。金额以 Long 类型的“分”保存，单笔范围为 0.01–999,999,999.99 元。净收支是当月收入减支出，不表示银行余额。
+
+后续 v0.3 接入 Retrofit + OkHttp 与 SiliconFlow Qwen3.5-4B，关闭深度思考，从文字生成可确认的记录草稿。当前不请求网络服务，不包含 AI 占位操作。
+
+当前项目不需要 API Key，也不包含任何 Key。后续禁止把个人 Key 写入源码、资源或 Gradle 构建配置。
+
+## 版本控制
+
+项目仓库：[berg-star/AI-Accounting](https://github.com/berg-star/AI-Accounting)。`main` 保存可构建的版本，后续功能通过分支开发、验证后合并。
+
+提交范围包括源码、测试、Room schema、Gradle Wrapper、工具配置脚本和文档。`.tools/`、本机 SDK 路径、构建产物、调试签名、密钥与本机备份不进入版本控制。GitHub 保存项目代码；手机里的账目仍需单独导出备份。
+
+从仓库下载到新电脑后，先按上面的步骤配置工具，再构建。新电脑会生成自己的 Debug 签名，不能直接覆盖原电脑签名的安装包；更新手机上的 App 应继续使用原电脑的签名，并妥善保留该签名文件。
