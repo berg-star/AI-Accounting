@@ -12,6 +12,7 @@ import com.example.aiaccounting.data.repository.LedgerRepository
 import com.example.aiaccounting.data.repository.LedgerSnapshot
 import com.example.aiaccounting.domain.model.*
 import com.example.aiaccounting.domain.ai.*
+import com.example.aiaccounting.data.backup.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -22,8 +23,9 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.YearMonth
 import java.util.UUID
+import java.io.InputStream
 
-enum class Page { HOME, STATISTICS, SETTINGS, ENTRY, CATEGORIES, CATEGORY_EDITOR, AI_INPUT, AI_REVIEW, AI_SETTINGS }
+enum class Page { HOME, STATISTICS, SETTINGS, ENTRY, CATEGORIES, CATEGORY_EDITOR, AI_INPUT, AI_REVIEW, AI_SETTINGS, SEARCH, BACKUP_PREVIEW }
 enum class Confirmation { DISCARD_ENTRY, DISCARD_CATEGORY, DELETE_ENTRY, DELETE_CATEGORY, STOP_USED_CATEGORY, CLEAR_API_KEY, DISCARD_AI }
 
 data class LedgerUiState(
@@ -50,6 +52,11 @@ data class LedgerUiState(
     val keyConfigured: Boolean = false,
     val keyRevision: Int = 0,
     val aiSettingsReturn: Page = Page.SETTINGS,
+    val search: SearchFilters = SearchFilters(),
+    val entryReturn: Page = Page.HOME,
+    val backupPreview: BackupSummary? = null,
+    val hasRecoveryBackup: Boolean = false,
+    val restoreRevision: Int = 0,
 )
 data class LedgerMessage(val text: String, val undoEntryId: Long? = null)
 
@@ -58,6 +65,7 @@ class LedgerViewModel(
     private val saved: SavedStateHandle,
     private val textAccounting: TextAccounting? = null,
     private val apiKeys: ApiKeyStore? = null,
+    private val recoveryBackups: RecoveryBackupStore? = null,
 ) : ViewModel() {
     private val mutableState = MutableStateFlow(restoreState())
     val state = mutableState.asStateFlow()
@@ -66,12 +74,13 @@ class LedgerViewModel(
     private var observing = false
     private var recognition: Job? = null
     private var recognitionId = 0L
+    private var pendingBackup: LedgerBackup? = null
 
     init { load() }
 
     private fun restoreState(): LedgerUiState = runCatching {
         LedgerUiState(
-            page = Page.valueOf(saved["page"] ?: Page.HOME.name),
+            page = Page.valueOf(saved["page"] ?: Page.HOME.name).let { if (it == Page.BACKUP_PREVIEW) Page.SETTINGS else it },
             month = YearMonth.parse(saved["month"] ?: YearMonth.now().toString()),
             categoryReturn = Page.valueOf(saved["categoryReturn"] ?: Page.SETTINGS.name),
             categoryKind = EntryKind.valueOf(saved["categoryKind"] ?: EntryKind.EXPENSE.name),
@@ -85,6 +94,9 @@ class LedgerViewModel(
             aiEditIndex = saved["aiEditIndex"],
             aiBatchId = saved["aiBatchId"],
             aiSettingsReturn = Page.valueOf(saved["aiSettingsReturn"] ?: Page.SETTINGS.name),
+            entryReturn = if (saved.get<String>("entryReturn") == Page.SEARCH.name) Page.SEARCH else Page.HOME,
+            search = SearchFilters(saved["searchKeyword"] ?: "", saved.get<String>("searchKind")?.let { EntryKind.valueOf(it) },
+                saved["searchCategory"], saved["searchFrom"] ?: "", saved["searchTo"] ?: "", saved["searchMin"] ?: "", saved["searchMax"] ?: ""),
         )
     }.getOrDefault(LedgerUiState())
 
@@ -96,6 +108,9 @@ class LedgerViewModel(
         saved["editingCategoryId"] = s.category.id; saved["editingCategoryKind"] = s.category.kind.name; saved["categoryName"] = s.category.name; saved["categoryIcon"] = s.category.icon; saved["categoryColor"] = s.category.color
         saved["aiText"] = s.aiText; saved["aiEditIndex"] = s.aiEditIndex; saved["aiSettingsReturn"] = s.aiSettingsReturn.name
         saved["aiBatchId"] = s.aiBatchId
+        saved["entryReturn"] = s.entryReturn.name
+        saved["searchKeyword"] = s.search.keyword; saved["searchKind"] = s.search.kind?.name; saved["searchCategory"] = s.search.categoryId
+        saved["searchFrom"] = s.search.fromDate; saved["searchTo"] = s.search.toDate; saved["searchMin"] = s.search.minAmount; saved["searchMax"] = s.search.maxAmount
         saved["aiDrafts"] = ArrayList(s.aiDrafts.map { d -> Bundle().apply {
             putString("kind", d.kind.name); putString("amount", d.amount); putLong("categoryId", d.categoryId ?: 0)
             putString("date", d.date); putString("note", d.note)
@@ -111,6 +126,7 @@ class LedgerViewModel(
                 repository.initialize()
                 val keyState = withContext(Dispatchers.IO) { runCatching { !apiKeys?.read().isNullOrBlank() } }
                 update { it.copy(keyConfigured = keyState.getOrDefault(false),
+                    hasRecoveryBackup = recoveryBackups?.exists() == true,
                     error = if (keyState.isFailure) "本机 API Key 无法读取，请在 AI 设置中重新保存" else null) }
                 repository.snapshots.collect { data ->
                     update { s ->
@@ -153,11 +169,11 @@ class LedgerViewModel(
         val s = state.value
         // A pending new-entry draft survives leaving the editor and visiting category management.
         val draft = if (s.entry.id == null) s.entry else EntryDraft()
-        update { it.copy(page = Page.ENTRY, aiEditIndex = null, error = null, entry = draft.copy(categoryId = draft.categoryId ?: it.data.categories.firstOrNull { c -> c.kind == draft.kind && c.active }?.id)) }
+        update { it.copy(page = Page.ENTRY, entryReturn = Page.HOME, aiEditIndex = null, error = null, entry = draft.copy(categoryId = draft.categoryId ?: it.data.categories.firstOrNull { c -> c.kind == draft.kind && c.active }?.id)) }
     }
     fun editEntry(record: EntryEntity) {
         if (!state.value.busy) {
-            update { it.copy(page = Page.ENTRY, aiEditIndex = null, error = null,
+            update { it.copy(page = Page.ENTRY, entryReturn = if (it.page == Page.SEARCH) Page.SEARCH else Page.HOME, aiEditIndex = null, error = null,
                 entry = EntryDraft(record.id, record.kind, Money.input(record.cents), record.categoryId, record.date, record.note)) }
         }
     }
@@ -183,8 +199,16 @@ class LedgerViewModel(
                 aiDrafts = it.aiDrafts.mapIndexed { i, old -> if (i == index) draft else old }) }
             return
         }
-        operation(success = { it.copy(page = Page.HOME, month = YearMonth.from(LocalDate.parse(draft.date)), filter = null, entry = EntryDraft()) }, message = "记录已保存") { repository.saveEntry(draft) }
+        operation(success = { it.copy(page = it.entryReturn, entryReturn = Page.HOME, month = YearMonth.from(LocalDate.parse(draft.date)), filter = null, entry = EntryDraft()) }, message = "记录已保存") { repository.saveEntry(draft) }
     }
+
+    fun openSearch() { if (!state.value.busy) update { it.copy(page = Page.SEARCH, error = null) } }
+    fun changeSearch(transform: (SearchFilters) -> SearchFilters) {
+        if (!state.value.busy) update { it.copy(search = transform(it.search), error = null) }
+    }
+    fun searchKind(kind: EntryKind?) { changeSearch { filters -> filters.copy(kind = kind,
+        categoryId = filters.categoryId?.takeIf { id -> kind == null || state.value.data.categories.any { it.id == id && it.kind == kind } }) } }
+    fun clearSearch() { changeSearch { SearchFilters() } }
 
     private fun validateDraft(d: EntryDraft): String? = when {
         Money.parse(d.amount) == null -> "请输入大于零、最多两位小数的金额"
@@ -293,25 +317,27 @@ class LedgerViewModel(
         if (state.value.busy) return
         val s = state.value
         when (s.page) {
-            Page.ENTRY -> if (entryDirty(s)) update { it.copy(confirmation = Confirmation.DISCARD_ENTRY) } else update { it.copy(page = if (it.aiEditIndex == null) Page.HOME else Page.AI_REVIEW, aiEditIndex = null, entry = EntryDraft(), error = null) }
+            Page.ENTRY -> if (entryDirty(s)) update { it.copy(confirmation = Confirmation.DISCARD_ENTRY) } else update { it.copy(page = if (it.aiEditIndex == null) it.entryReturn else Page.AI_REVIEW, entryReturn = Page.HOME, aiEditIndex = null, entry = EntryDraft(), error = null) }
             Page.CATEGORY_EDITOR -> if (categoryDirty(s)) update { it.copy(confirmation = Confirmation.DISCARD_CATEGORY) } else update { it.copy(page = Page.CATEGORIES, error = null) }
             Page.CATEGORIES -> update { it.copy(page = it.categoryReturn, error = null) }
             Page.STATISTICS, Page.SETTINGS -> navigate(Page.HOME)
             Page.AI_INPUT, Page.AI_REVIEW -> navigate(Page.HOME)
             Page.AI_SETTINGS -> navigate(s.aiSettingsReturn)
+            Page.SEARCH -> navigate(Page.HOME)
+            Page.BACKUP_PREVIEW -> { pendingBackup = null; update { it.copy(page = Page.SETTINGS, backupPreview = null, error = null) } }
             Page.HOME -> if (s.filter != null) filterCategory(null)
         }
     }
     fun confirm() {
         val s = state.value
         when (s.confirmation) {
-            Confirmation.DISCARD_ENTRY -> update { it.copy(page = if (it.aiEditIndex == null) Page.HOME else Page.AI_REVIEW, aiEditIndex = null, entry = EntryDraft(), confirmation = null, error = null) }
+            Confirmation.DISCARD_ENTRY -> update { it.copy(page = if (it.aiEditIndex == null) it.entryReturn else Page.AI_REVIEW, entryReturn = Page.HOME, aiEditIndex = null, entry = EntryDraft(), confirmation = null, error = null) }
             Confirmation.DISCARD_CATEGORY -> update { it.copy(page = Page.CATEGORIES, confirmation = null, error = null) }
             Confirmation.DELETE_CATEGORY -> operation(success = { it.copy(page = Page.CATEGORIES) }, message = "分类已删除") { repository.deleteCategory(s.category.id ?: return@operation) }
             Confirmation.STOP_USED_CATEGORY -> operation(success = { it.copy(page = Page.CATEGORIES) }, message = "分类已停用，历史记录仍保留") { repository.setCategoryActive(s.category.id ?: return@operation, false) }
             Confirmation.DELETE_ENTRY -> {
                 val id = s.entry.id ?: return
-                operation(success = { it.copy(page = Page.HOME, entry = EntryDraft()) }) {
+                operation(success = { it.copy(page = it.entryReturn, entryReturn = Page.HOME, entry = EntryDraft()) }) {
                     repository.deleteEntry(id)
                     messageChannel.send(LedgerMessage("记录已删除", id))
                 }
@@ -325,10 +351,34 @@ class LedgerViewModel(
     }
     fun undo(id: Long) { operation(message = "记录已恢复") { repository.restoreEntry(id) } }
 
-    fun exportBackup(resolver: ContentResolver, uri: Uri) {
-        operation(message = "完整备份已导出") {
+    fun previewBackup(resolver: ContentResolver, uri: Uri) = previewBackup {
+        resolver.openInputStream(uri) ?: throw IllegalArgumentException("无法打开备份文件")
+    }
+
+    fun previewBackup(openStream: () -> InputStream) {
+        operation {
+            val backup = withContext(Dispatchers.IO) { openStream().use { BackupCodec.read(it) } }
+            pendingBackup = backup
+            update { it.copy(page = Page.BACKUP_PREVIEW, backupPreview = backup.summary) }
+        }
+    }
+
+    fun restoreBackup() {
+        val backup = pendingBackup ?: return
+        val recovery = recoveryBackups ?: run { update { it.copy(error = "本机恢复备份目录不可用，请重试") }; return }
+        operation(success = { it.copy(page = Page.SETTINGS, entry = EntryDraft(), category = CategoryDraft(), filter = null,
+            entryReturn = Page.HOME, categoryReturn = Page.SETTINGS, aiText = "", aiDrafts = emptyList(), aiBatchId = null, aiEditIndex = null,
+            search = SearchFilters(), backupPreview = null, hasRecoveryBackup = true, restoreRevision = it.restoreRevision + 1) }, message = "账本已恢复，原账本已保留为恢复前备份") {
+            repository.restoreBackup(backup) { json -> withContext(Dispatchers.IO) { recovery.write(json) } }
+            pendingBackup = null
+            while (messageChannel.tryReceive().isSuccess) { /* Undo messages refer to the old ledger. */ }
+        }
+    }
+
+    fun exportBackup(resolver: ContentResolver, uri: Uri, recovery: Boolean = false) {
+        operation(message = if (recovery) "恢复前备份已导出" else "完整备份已导出") {
             withContext(Dispatchers.IO) {
-                val json = repository.backupJson()
+                val json = if (recovery) recoveryBackups?.read() ?: throw IllegalArgumentException("没有可导出的恢复前备份") else repository.backupJson()
                 val stream = resolver.openOutputStream(uri, "wt") ?: throw IllegalStateException("无法写入文件")
                 stream.bufferedWriter(Charsets.UTF_8).use { it.write(json) }
             }

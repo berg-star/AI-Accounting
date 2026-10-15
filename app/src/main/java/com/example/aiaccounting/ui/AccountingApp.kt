@@ -10,6 +10,7 @@ import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +30,8 @@ import com.example.aiaccounting.ui.common.ErrorText
 import com.example.aiaccounting.ui.entry.EntryScreen
 import com.example.aiaccounting.ui.home.HomeScreen
 import com.example.aiaccounting.ui.settings.SettingsScreen
+import com.example.aiaccounting.ui.settings.BackupPreviewScreen
+import com.example.aiaccounting.ui.search.SearchScreen
 import com.example.aiaccounting.ui.statistics.StatisticsScreen
 import java.time.LocalDate
 
@@ -40,15 +43,19 @@ fun AccountingApp(viewModel: LedgerViewModel) {
     val context=LocalContext.current
     val lifecycle=LocalLifecycleOwner.current
     val backup=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null)viewModel.exportBackup(context.contentResolver,uri) }
+    val recovery=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null)viewModel.exportBackup(context.contentResolver,uri,recovery=true) }
+    val importBackup=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri!=null)viewModel.previewBackup(context.contentResolver,uri) }
+    LaunchedEffect(s.restoreRevision) { if(s.restoreRevision>0)snackbar.currentSnackbarData?.dismiss() }
     LaunchedEffect(viewModel,lifecycle) {
         lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.messages.collect { message ->
+                val ledgerRevision=viewModel.state.value.restoreRevision
                 val result=snackbar.showSnackbar(message.text,actionLabel=if(message.undoEntryId!=null) "撤销" else null,withDismissAction=true,duration=SnackbarDuration.Long)
-                if(result==SnackbarResult.ActionPerformed && message.undoEntryId!=null)viewModel.undo(message.undoEntryId)
+                if(result==SnackbarResult.ActionPerformed && message.undoEntryId!=null&&viewModel.state.value.restoreRevision==ledgerRevision)viewModel.undo(message.undoEntryId)
             }
         }
     }
-    val sub=s.page in listOf(Page.ENTRY,Page.CATEGORIES,Page.CATEGORY_EDITOR,Page.AI_INPUT,Page.AI_REVIEW,Page.AI_SETTINGS)
+    val sub=s.page in listOf(Page.ENTRY,Page.CATEGORIES,Page.CATEGORY_EDITOR,Page.AI_INPUT,Page.AI_REVIEW,Page.AI_SETTINGS,Page.SEARCH,Page.BACKUP_PREVIEW)
     BackHandler(enabled=sub||s.page!=Page.HOME||s.filter!=null||s.busy) { viewModel.back() }
     val title=when(s.page) {
         Page.HOME -> "AI 记账"
@@ -60,12 +67,15 @@ fun AccountingApp(viewModel: LedgerViewModel) {
         Page.AI_INPUT -> "AI 记一笔"
         Page.AI_REVIEW -> "确认账目"
         Page.AI_SETTINGS -> "AI 设置"
+        Page.SEARCH -> "搜索账目"
+        Page.BACKUP_PREVIEW -> "恢复备份"
     }
     Scaffold(
         containerColor=MaterialTheme.colorScheme.background,
         topBar={ TopAppBar(title={Text(title)},navigationIcon={if(sub)IconButton(onClick=viewModel::back,enabled=!s.busy||s.recognizing){Icon(Icons.AutoMirrored.Filled.ArrowBack,"返回")}},actions={
             if(s.page==Page.CATEGORIES)IconButton(onClick=viewModel::newCategory,enabled=!s.busy){Icon(Icons.Default.Add,"新增分类")}
             if(s.page==Page.HOME||s.page==Page.STATISTICS)TextButton(onClick=viewModel::openAi,enabled=!s.loading&&!s.busy,modifier=Modifier.testTag("open-ai")){Text("AI 记一笔")}
+            if(s.page==Page.HOME)IconButton(onClick=viewModel::openSearch,enabled=!s.busy&&!s.loading,modifier=Modifier.testTag("open-search")){Icon(Icons.Default.Search,"搜索账目")}
             if(s.page==Page.AI_INPUT)TextButton(onClick=viewModel::openAiSettings,enabled=!s.busy,modifier=Modifier.testTag("ai-settings")){Text("AI 设置")}
         },colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background)) },
         snackbarHost={ SnackbarHost(snackbar) },
@@ -94,6 +104,14 @@ fun AccountingApp(viewModel: LedgerViewModel) {
                         }
                     }
                 }
+            } else if(s.page==Page.BACKUP_PREVIEW) {
+                Surface(shadowElevation=3.dp) {
+                    Button(onClick=viewModel::restoreBackup,enabled=!s.busy&&s.backupPreview!=null,
+                        modifier=Modifier.fillMaxWidth().navigationBarsPadding().padding(16.dp).heightIn(min=50.dp).testTag("restore-backup")) {
+                        if(s.busy)CircularProgressIndicator(Modifier.size(20.dp),strokeWidth=2.dp,color=MaterialTheme.colorScheme.onPrimary)
+                        else Text("替换账本并恢复")
+                    }
+                }
             } else if(!sub) NavigationBar(containerColor=MaterialTheme.colorScheme.surface) {
                 listOf(Triple(Page.HOME,Icons.Default.Home,"明细"),Triple(Page.STATISTICS,Icons.AutoMirrored.Filled.List,"统计"),Triple(Page.SETTINGS,Icons.Default.Settings,"设置")).forEach { (page,icon,label) ->
                     NavigationBarItem(selected=s.page==page,onClick={viewModel.navigate(page)},enabled=!s.busy,icon={Icon(icon,null)},label={Text(label)})
@@ -110,13 +128,16 @@ fun AccountingApp(viewModel: LedgerViewModel) {
                 when(s.page) {
                     Page.HOME -> HomeScreen(s,viewModel::moveMonth,viewModel::setMonth,viewModel::editEntry,{viewModel.filterCategory(null)})
                     Page.STATISTICS -> StatisticsScreen(s,viewModel::moveMonth,viewModel::setMonth,viewModel::statisticsKind,{viewModel.filterCategory(it)})
-                    Page.SETTINGS -> SettingsScreen(!s.busy,viewModel::manageCategories,{backup.launch("ai-accounting-${LocalDate.now()}.json")},viewModel::openAiSettings)
+                    Page.SETTINGS -> SettingsScreen(!s.busy,viewModel::manageCategories,{backup.launch("ai-accounting-${LocalDate.now()}.json")},viewModel::openAiSettings,
+                        {importBackup.launch(arrayOf("*/*"))},s.hasRecoveryBackup,{recovery.launch("ai-accounting-before-restore-${LocalDate.now()}.json")})
                     Page.ENTRY -> EntryScreen(s,viewModel::changeEntry,viewModel::entryKind,viewModel::manageCategories,viewModel::askDeleteEntry)
                     Page.CATEGORIES -> CategoryScreen(s,viewModel::categoryKind,viewModel::editCategory,viewModel::toggleSorting,viewModel::toggleArchived,viewModel::moveCategory,viewModel::newCategory)
                     Page.CATEGORY_EDITOR -> CategoryEditor(s,viewModel::changeCategory,viewModel::toggleCategoryActive,viewModel::askDeleteCategory)
                     Page.AI_INPUT -> AiInputScreen(s,viewModel::changeAiText)
                     Page.AI_REVIEW -> AiReviewScreen(s,viewModel::editAiDraft,viewModel::removeAiDraft,viewModel::restartAi)
                     Page.AI_SETTINGS -> AiSettingsScreen(s,viewModel::saveApiKey,viewModel::askClearApiKey)
+                    Page.SEARCH -> SearchScreen(s,viewModel::changeSearch,viewModel::searchKind,viewModel::clearSearch,viewModel::editEntry)
+                    Page.BACKUP_PREVIEW -> BackupPreviewScreen(s)
                 }
             }
         }

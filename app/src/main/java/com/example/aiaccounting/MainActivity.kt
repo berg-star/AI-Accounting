@@ -21,7 +21,7 @@ class MainActivity : ComponentActivity() {
                 val ledger: LedgerViewModel = viewModel(factory = viewModelFactory {
                     initializer {
                         val app = application as AccountingApplication
-                        LedgerViewModel(app.repository, createSavedStateHandle(), app.textAccounting, app.apiKeys)
+                        LedgerViewModel(app.repository, createSavedStateHandle(), app.textAccounting, app.apiKeys, app.recoveryBackups)
                     }
                 })
                 AccountingApp(ledger)

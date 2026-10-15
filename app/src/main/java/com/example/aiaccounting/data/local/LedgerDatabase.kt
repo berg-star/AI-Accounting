@@ -50,9 +50,13 @@ interface LedgerDao {
     @Query("DELETE FROM categories WHERE id = :id") suspend fun deleteCategory(id: Long)
     @Query("SELECT COUNT(*) FROM entries WHERE categoryId = :id") suspend fun usage(id: Long): Int
     @Insert suspend fun insertEntry(entry: EntryEntity): Long
+    @Insert suspend fun insertEntries(entries: List<EntryEntity>)
     @Update suspend fun updateEntry(entry: EntryEntity)
     @Query("SELECT COUNT(*) FROM ai_batches WHERE id = :id") suspend fun aiBatchCount(id: String): Int
     @Insert suspend fun insertAiBatch(batch: AiBatchEntity)
+    @Query("DELETE FROM entries") suspend fun clearEntries()
+    @Query("DELETE FROM categories") suspend fun clearCategories()
+    @Query("DELETE FROM ai_batches") suspend fun clearAiBatches()
 }
 
 @Database(entities = [CategoryEntity::class, EntryEntity::class, AiBatchEntity::class], version = 2, exportSchema = true)

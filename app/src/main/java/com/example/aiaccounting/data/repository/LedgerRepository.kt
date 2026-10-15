@@ -3,11 +3,10 @@ package com.example.aiaccounting.data.repository
 import androidx.room.withTransaction
 import com.example.aiaccounting.data.local.*
 import com.example.aiaccounting.domain.model.*
+import com.example.aiaccounting.data.backup.BackupCodec
+import com.example.aiaccounting.data.backup.LedgerBackup
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
-import org.json.JSONArray
-import org.json.JSONObject
-import java.time.Instant
 import java.time.YearMonth
 
 data class LedgerSnapshot(val categories: List<CategoryEntity> = emptyList(), val entries: List<EntryEntity> = emptyList()) {
@@ -19,6 +18,20 @@ data class LedgerSnapshot(val categories: List<CategoryEntity> = emptyList(), va
         return MonthlyTotals(rows.filter { it.kind == EntryKind.EXPENSE }.sumOf { it.cents }, rows.filter { it.kind == EntryKind.INCOME }.sumOf { it.cents })
     }
     fun usage(id: Long) = entries.count { it.categoryId == id }
+    fun search(filters: SearchFilters): List<EntryEntity> {
+        if (filters.error() != null) return emptyList()
+        val needle = filters.keyword.trim()
+        val names = categories.associate { it.id to it.name }
+        val minimum = amountBound(filters.minAmount)
+        val maximum = amountBound(filters.maxAmount)
+        return entries.filter { e ->
+            e.deletedAt == null && (filters.kind == null || e.kind == filters.kind) &&
+                (filters.categoryId == null || e.categoryId == filters.categoryId) &&
+                (filters.fromDate.isBlank() || e.date >= filters.fromDate) && (filters.toDate.isBlank() || e.date <= filters.toDate) &&
+                (minimum == null || e.cents >= minimum) && (maximum == null || e.cents <= maximum) &&
+                (needle.isBlank() || e.note.contains(needle, ignoreCase = true) || names[e.categoryId].orEmpty().contains(needle, ignoreCase = true))
+        }.sortedWith(compareByDescending<EntryEntity> { it.date }.thenByDescending { it.id })
+    }
 }
 
 class LedgerRepository(private val db: LedgerDatabase) {
@@ -112,8 +125,15 @@ class LedgerRepository(private val db: LedgerDatabase) {
 
     suspend fun backupJson(): String {
         val data = snapshot()
-        return JSONObject().put("format", "ai-accounting").put("formatVersion", 1).put("databaseVersion", 2).put("appVersion", "0.3.0").put("currency", "CNY").put("exportedAt", Instant.now().toString())
-            .put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().put("id", c.id).put("kind", c.kind.name).put("name", c.name).put("icon", c.icon).put("color", c.color).put("sortOrder", c.sortOrder).put("active", c.active).put("fallback", c.fallback)) } })
-            .put("entries", JSONArray().apply { data.entries.forEach { e -> put(JSONObject().put("id", e.id).put("kind", e.kind.name).put("cents", e.cents).put("categoryId", e.categoryId).put("date", e.date).put("note", e.note).put("createdAt", e.createdAt).put("updatedAt", e.updatedAt).put("deletedAt", e.deletedAt ?: JSONObject.NULL)) } }).toString(2)
+        return BackupCodec.encode(data.categories, data.entries, "0.4.0")
+    }
+
+    suspend fun restoreBackup(backup: LedgerBackup, preserveCurrent: suspend (String) -> Unit) = db.withTransaction {
+        // Validate again at the write boundary, even for callers which bypass the file preview.
+        BackupCodec.decode(BackupCodec.encode(backup.categories, backup.entries, backup.appVersion))
+        preserveCurrent(backupJson())
+        dao.clearEntries(); dao.clearAiBatches(); dao.clearCategories()
+        dao.insertCategories(backup.categories)
+        dao.insertEntries(backup.entries)
     }
 }

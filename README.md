@@ -1,8 +1,8 @@
 # AI 记账
 
-个人使用的 Android 原生 App。v0.3 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，支持本地手动记账及纯文字 AI 记账。
+个人使用的 Android 原生 App。v0.4 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，支持本地手动记账、纯文字 AI 记账、历史搜索及备份恢复。
 
-首版工具链及欢迎页的历史记录见 [初始环境验证](docs/verification.md)，v0.2 的历史记录见 [本地记账验证](docs/verification-v0.2.md)。v0.3 的接口约定、使用方式和验证范围见 [文字 AI 记账](docs/text-ai-v0.3.md)。
+首版工具链及欢迎页的历史记录见 [初始环境验证](docs/verification.md)，v0.2 的历史记录见 [本地记账验证](docs/verification-v0.2.md)。AI 接口约定见 [文字 AI 记账](docs/text-ai-v0.3.md)，本版功能与真实接口验证见 [搜索、备份恢复与真机 AI 测试](docs/search-backup-v0.4.md)。
 
 ## 构建环境
 
@@ -90,6 +90,16 @@ adb shell am start -n com.example.aiaccounting/.MainActivity
 
 v0.2 已在 API 31 真机上通过 5 项自动化测试，并检查实际首页和原生键盘显示。测试配置固定保留已安装 APK，避免测试结束后默认卸载 App。数据库与 Compose 测试使用独立账本，原生窗口测试不保存测试记录。
 
+开发时不需要反复手动传输 APK。手机保持 USB 调试授权后，可通过 `adb install -r` 自动覆盖更新；同一签名下会保留账目和加密保存的 Key。常规回归使用下方模拟器脚本即可，不需要连接手机。
+
+需要验证真实 AI 时，先在手机 App 的“AI 设置”中保存 Key，再连接一台已授权的手机并运行：
+
+```powershell
+.\scripts\test-ai-phone.ps1 -AllowPaidRequests
+```
+
+脚本自动构建、覆盖安装并运行三组固定的合成文字请求。只读取 App 内已加密保存的 Key，不要求在电脑或聊天中填写 Key；不读取正式账本，也不保存测试记录。真实请求会使用硅基流动账户额度，因此普通模拟器回归默认跳过此项测试。自动化安装若遇到手机系统确认框，需要在手机上允许；签名冲突时脚本停止，不会卸载 App。
+
 ## 电脑上的模拟器测试
 
 已完成 API 31 模拟器环境验收：一键构建、安装、5 项设备测试及测试后 App 启动均通过，详细结果见 [模拟器验证记录](docs/emulator-environment.md)。
@@ -133,6 +143,7 @@ app/
         local/                # Room 数据库、记录与分类实体、DAO
         remote/               # SiliconFlow 请求、响应校验与网络错误处理
         security/             # Android Keystore 加密保存 API Key
+        backup/               # 备份校验、编码及恢复前副本
         repository/           # 数据校验、事务、汇总快照与备份
       domain/model/           # 收支类型、金额与草稿
       ui/
@@ -144,7 +155,8 @@ app/
         ai/                   # 文字输入、草稿核对及 AI 设置
         category/             # 分类管理
         statistics/           # 分类排行
-        settings/             # 本机数据与备份入口
+        search/               # 历史搜索及组合筛选
+        settings/             # 本机数据、备份入口及恢复预览
         theme/                # Compose 主题
     res/                      # 文本、启动图标、系统主题
 gradle/
@@ -171,7 +183,9 @@ docs/
 - 无历史记录的分类可删除；已有记录的分类只能停用。兜底分类保留。
 - 分类排行与占比，点击分类查看当月明细；停用分类仍计入历史统计。
 - Room 本机持久化、系统深色主题、输入草稿保留及放弃修改提示。
-- 通过 Android 系统文件选择器导出完整 JSON 备份，包括分类和软删除记录。当前没有导入恢复入口。
+- 跨月份按备注或分类搜索，组合收支类型、分类、日期及金额筛选；结果显示总笔数与收支合计，编辑后保留搜索条件。
+- 通过 Android 系统文件选择器导出或恢复完整 JSON 备份，包括分类和软删除记录；先校验和预览，确认后替换账本。
+- 恢复前自动保存一份原账本，可从设置导出；校验失败或数据库写入失败不会清空原账本。
 
 正式 App 不注入示例账目。金额以 Long 类型的“分”保存，单笔范围为 0.01–999,999,999.99 元。净收支是当月收入减支出，不表示银行余额。
 
