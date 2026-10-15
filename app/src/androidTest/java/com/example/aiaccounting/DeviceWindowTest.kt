@@ -79,9 +79,11 @@ class DeviceWindowTest {
                 found
             }
             screenshot("real-home")
-            tap(textNode("记一笔")!!)
+            listOf(Triple("记一笔", "保存这笔记录", "real-keyboard"),
+                Triple("AI 记一笔", "识别账目", "real-ai-keyboard")).forEach { (entryPoint, action, capture) ->
+            tap(textNode(entryPoint)!!)
             var field:AccessibilityNodeInfo?=null
-            waitFor("Amount field not found") {
+            waitFor("Editable field not found") {
                 field=find(instrumentation.uiAutomation.rootInActiveWindow) { it.packageName?.toString()=="com.example.aiaccounting"&&it.isEditable }
                 field!=null
             }
@@ -102,7 +104,7 @@ class DeviceWindowTest {
             // Re-read both geometries until the unobscured layout is stable.
             var previousGeometry:Pair<Int,Int>?=null
             var stableSamples=0
-            waitFor("Save button is covered by native keyboard") {
+            waitFor("$action button is covered by native keyboard") {
                 scenario.onActivity { activity ->
                     val decor=activity.window.decorView
                     val insets=decor.rootWindowInsets
@@ -111,20 +113,21 @@ class DeviceWindowTest {
                     keyboardTop=location[1]+decor.height-(insets?.getInsets(WindowInsets.Type.ime())?.bottom?:0)
                 }
                 val bounds=Rect()
-                textNode("保存这笔记录")?.getBoundsInScreen(bounds)
+                textNode(action)?.getBoundsInScreen(bounds)
                 val geometry=keyboardTop to bounds.bottom
                 val clear=visible&&bounds.height()>0&&bounds.top>=0&&bounds.bottom<=keyboardTop+2
                 stableSamples=if(clear&&geometry==previousGeometry)stableSamples+1 else 0
                 previousGeometry=geometry
                 stableSamples>=3
             }
-            screenshot("real-keyboard")
+            screenshot(capture)
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             waitFor("Keyboard did not close") {
                 scenario.onActivity { visible=it.window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime())==true };!visible
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             waitFor("Empty draft should return to home") { textNode("记一笔")!=null }
+            }
         }
     }
 }

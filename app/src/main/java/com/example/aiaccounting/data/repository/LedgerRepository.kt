@@ -50,6 +50,21 @@ class LedgerRepository(private val db: LedgerDatabase) {
         if (old == null) dao.insertEntry(entry) else { dao.updateEntry(entry); old.id }
     }
 
+    suspend fun saveEntries(drafts: List<EntryDraft>): List<Long> = db.withTransaction {
+        require(drafts.size in 1..20 && drafts.all { it.id == null }) { "请确认 1 至 20 笔新的账目草稿" }
+        // Nested Room transactions join this transaction: any invalid row rolls the whole batch back.
+        drafts.map { saveEntry(it) }
+    }
+
+    suspend fun saveAiBatch(batchId: String, drafts: List<EntryDraft>) = db.withTransaction {
+        require(batchId.isNotBlank())
+        // The receipt and rows commit together. Restoring an old pending draft cannot insert it twice.
+        if (dao.aiBatchCount(batchId) == 0) {
+            saveEntries(drafts)
+            dao.insertAiBatch(AiBatchEntity(batchId, System.currentTimeMillis()))
+        }
+    }
+
     suspend fun saveCategory(draft: CategoryDraft) = db.withTransaction {
         val name = draft.name.trim()
         require(name.isNotEmpty() && name.length <= 12) { "分类名称需要 1 至 12 个字" }
@@ -97,7 +112,7 @@ class LedgerRepository(private val db: LedgerDatabase) {
 
     suspend fun backupJson(): String {
         val data = snapshot()
-        return JSONObject().put("format", "ai-accounting").put("formatVersion", 1).put("databaseVersion", 1).put("appVersion", "0.2.0").put("currency", "CNY").put("exportedAt", Instant.now().toString())
+        return JSONObject().put("format", "ai-accounting").put("formatVersion", 1).put("databaseVersion", 2).put("appVersion", "0.3.0").put("currency", "CNY").put("exportedAt", Instant.now().toString())
             .put("categories", JSONArray().apply { data.categories.forEach { c -> put(JSONObject().put("id", c.id).put("kind", c.kind.name).put("name", c.name).put("icon", c.icon).put("color", c.color).put("sortOrder", c.sortOrder).put("active", c.active).put("fallback", c.fallback)) } })
             .put("entries", JSONArray().apply { data.entries.forEach { e -> put(JSONObject().put("id", e.id).put("kind", e.kind.name).put("cents", e.cents).put("categoryId", e.categoryId).put("date", e.date).put("note", e.note).put("createdAt", e.createdAt).put("updatedAt", e.updatedAt).put("deletedAt", e.deletedAt ?: JSONObject.NULL)) } }).toString(2)
     }

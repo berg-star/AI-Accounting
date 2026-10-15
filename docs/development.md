@@ -1,6 +1,6 @@
 # 开发约定
 
-当前已完成 v0.2 的本地记账功能。下方“第一阶段”为初始工具链验证的历史范围；当前实现与验证分别见 README 和 `verification-v0.2.md`。
+当前版本为 v0.3，增加纯文字 AI 草稿识别、核对和入账。下方“第一阶段”为初始工具链验证的历史范围；当前范围见 README，v0.2 验证保留为历史记录。
 
 ## 第一阶段
 
@@ -23,7 +23,7 @@
 
 ## API Key
 
-不把 Key 放进源码、资源、版本目录、BuildConfig 或 APK 的静态配置中。个人使用场景可以后续提供设备端输入入口，并按需求设计本机保存方式。
+不把 Key 放进源码、资源、版本目录、BuildConfig 或 APK 的静态配置中。个人使用场景通过设备端 AI 设置输入，用 Android Keystore AES-GCM 加密后存入 app-private SharedPreferences。Key 不进入 ViewModel 可保存状态，设置页不回显已保存的 Key。
 
 真实 Key 不进入日志、示例、截图或版本控制。第一阶段完全不调用网络接口。
 

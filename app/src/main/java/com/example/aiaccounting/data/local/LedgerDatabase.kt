@@ -2,6 +2,8 @@ package com.example.aiaccounting.data.local
 
 import android.content.Context
 import androidx.room.*
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.aiaccounting.domain.model.EntryKind
 
 @Entity(tableName = "categories", indices = [Index(value = ["kind", "name"], unique = true)])
@@ -33,6 +35,9 @@ data class EntryEntity(
     val deletedAt: Long? = null,
 )
 
+@Entity(tableName = "ai_batches")
+data class AiBatchEntity(@PrimaryKey val id: String, val createdAt: Long)
+
 @Dao
 interface LedgerDao {
     @Query("SELECT * FROM categories ORDER BY kind, sortOrder, id") suspend fun categories(): List<CategoryEntity>
@@ -46,15 +51,22 @@ interface LedgerDao {
     @Query("SELECT COUNT(*) FROM entries WHERE categoryId = :id") suspend fun usage(id: Long): Int
     @Insert suspend fun insertEntry(entry: EntryEntity): Long
     @Update suspend fun updateEntry(entry: EntryEntity)
+    @Query("SELECT COUNT(*) FROM ai_batches WHERE id = :id") suspend fun aiBatchCount(id: String): Int
+    @Insert suspend fun insertAiBatch(batch: AiBatchEntity)
 }
 
-@Database(entities = [CategoryEntity::class, EntryEntity::class], version = 1, exportSchema = true)
+@Database(entities = [CategoryEntity::class, EntryEntity::class, AiBatchEntity::class], version = 2, exportSchema = true)
 abstract class LedgerDatabase : RoomDatabase() {
     abstract fun ledgerDao(): LedgerDao
 
     companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `ai_batches` (`id` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            }
+        }
         fun open(context: Context): LedgerDatabase = Room.databaseBuilder(
             context.applicationContext, LedgerDatabase::class.java, "accounting.db",
-        ).build()
+        ).addMigrations(MIGRATION_1_2).build()
     }
 }

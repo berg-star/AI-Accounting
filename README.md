@@ -1,8 +1,8 @@
 # AI 记账
 
-个人使用的 Android 原生 App。v0.2 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，实现本地手动记账。
+个人使用的 Android 原生 App。v0.3 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，支持本地手动记账及纯文字 AI 记账。
 
-首版工具链及欢迎页已经过构建和真机验证，记录见 [初始环境验证](docs/verification.md)。v0.2 的构建、测试和真机验证单独记录在 [本版验证记录](docs/verification-v0.2.md)，避免把首版结果当作新版验证。
+首版工具链及欢迎页的历史记录见 [初始环境验证](docs/verification.md)，v0.2 的历史记录见 [本地记账验证](docs/verification-v0.2.md)。v0.3 的接口约定、使用方式和验证范围见 [文字 AI 记账](docs/text-ai-v0.3.md)。
 
 ## 构建环境
 
@@ -18,6 +18,7 @@
 | Activity Compose | 1.12.1 |
 | Room / KSP | 2.8.5 / 2.3.10 |
 | Lifecycle | 2.10.0 |
+| Retrofit / OkHttp | 3.0.0 / 4.12.0 |
 | SDK 命令行工具 | 19.0 |
 | SDK Platform | Android 36 |
 | SDK Build Tools | 35.0.0 |
@@ -130,6 +131,8 @@ app/
       AccountingApplication.kt
       data/
         local/                # Room 数据库、记录与分类实体、DAO
+        remote/               # SiliconFlow 请求、响应校验与网络错误处理
+        security/             # Android Keystore 加密保存 API Key
         repository/           # 数据校验、事务、汇总快照与备份
       domain/model/           # 收支类型、金额与草稿
       ui/
@@ -138,6 +141,7 @@ app/
         common/               # 本地图标、月份选择与概览
         home/                 # 月度明细
         entry/                # 新增和编辑记录
+        ai/                   # 文字输入、草稿核对及 AI 设置
         category/             # 分类管理
         statistics/           # 分类排行
         settings/             # 本机数据与备份入口
@@ -171,9 +175,13 @@ docs/
 
 正式 App 不注入示例账目。金额以 Long 类型的“分”保存，单笔范围为 0.01–999,999,999.99 元。净收支是当月收入减支出，不表示银行余额。
 
-后续 v0.3 接入 Retrofit + OkHttp 与 SiliconFlow Qwen3.5-4B，关闭深度思考，从文字生成可确认的记录草稿。当前不请求网络服务，不包含 AI 占位操作。
+v0.3 从首页右上角“AI 记一笔”进入。输入一句或几句话，生成包含金额、收支类型、日期、分类和详细备注的草稿。支持修改、移除及整批确认入账；取消或识别失败会保留原文，未确认草稿不计入账本。备注尽量保留用户明确提供的菜品、店名、交通工具、目的地、用途等细节，不要求逐笔重新填写。
 
-当前项目不需要 API Key，也不包含任何 Key。后续禁止把个人 Key 写入源码、资源或 Gradle 构建配置。
+首次使用在“设置 → AI 设置”或文字输入页填写硅基流动 API Key，使用 `Qwen/Qwen3.5-4B`，请求固定为 `enable_thinking: false`。Key 使用 Android Keystore 的 AES-GCM 加密保存在手机上，不写入源码、资源、Gradle 配置、日志或导出备份。手动记账始终不需要 Key。
+
+点击“识别账目”时，才会把本次文字、当前日期和可用分类发送到硅基流动；不发送历史账目。每次最多 2000 字、20 笔，金额以人民币“元”输入。金额不明确的内容不应猜测；暂不处理语音、截图、外币、转账、借还款或退款。实际识别结果需要核对。
+
+模型输出会在本机重新校验，多笔记录在同一个数据库事务中保存，并以批次标识防止相同草稿重试或恢复后重复入账。数据库从 schema 1 升级到 2，仅新增批次表，保留已有分类与记录。
 
 ## 版本控制
 

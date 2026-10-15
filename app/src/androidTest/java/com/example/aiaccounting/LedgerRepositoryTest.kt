@@ -1,6 +1,7 @@
 package com.example.aiaccounting
 
 import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -22,7 +23,7 @@ class LedgerRepositoryTest {
     private lateinit var repo: LedgerRepository
     private lateinit var fileName: String
     private fun open() {
-        db=Room.databaseBuilder(context,LedgerDatabase::class.java,fileName).build()
+        db=Room.databaseBuilder(context,LedgerDatabase::class.java,fileName).addMigrations(LedgerDatabase.MIGRATION_1_2).build()
         repo=LedgerRepository(db)
     }
     @Before fun prepare() = runBlocking {
@@ -67,5 +68,52 @@ class LedgerRepositoryTest {
         val expense=repo.snapshot().categories.first { it.kind==EntryKind.EXPENSE }
         try { repo.saveEntry(EntryDraft(kind=EntryKind.INCOME,amount="10",categoryId=expense.id));fail("Kind mismatch must fail") } catch (_:IllegalArgumentException) { }
         assertTrue(repo.snapshot().entries.isEmpty())
+    }
+
+    @Test fun aiBatchIsAtomicAndPreservesDetailedNotes() = runBlocking {
+        val categories = repo.snapshot().categories
+        val food = categories.single { it.name == "餐饮" }
+        val transport = categories.single { it.name == "交通" }
+        val drafts = listOf(EntryDraft(amount = "28", categoryId = food.id, note = "午餐：牛肉面"),
+            EntryDraft(amount = "6", categoryId = transport.id, note = "地铁去公司"))
+        try { repo.saveEntries(drafts + drafts.last().copy(amount = "0")); fail("Batch must roll back") }
+        catch (_: IllegalArgumentException) { }
+        assertTrue(repo.snapshot().entries.isEmpty())
+        val ids = repo.saveEntries(drafts)
+        assertEquals(2, ids.distinct().size)
+        assertEquals(setOf("午餐：牛肉面", "地铁去公司"), repo.snapshot().entries.map { it.note }.toSet())
+        assertEquals(3400L, repo.snapshot().entries.sumOf { it.cents })
+    }
+
+    @Test fun batchReceiptSurvivesReopenAndPreventsDuplicateInsert() = runBlocking {
+        val food = repo.snapshot().categories.single { it.name == "餐饮" }
+        val draft = EntryDraft(amount = "28", categoryId = food.id, note = "午餐：牛肉面")
+        val id = UUID.randomUUID().toString()
+        repo.saveAiBatch(id, listOf(draft))
+        db.close(); open()
+        repo.saveAiBatch(id, listOf(draft))
+        assertEquals(1, repo.snapshot().entries.size)
+        assertEquals(2800L, repo.snapshot().entries.single().cents)
+    }
+
+    @Test fun upgradingV02PreservesExistingCategoriesAndEntries() = runBlocking {
+        db.close()
+        context.deleteDatabase(fileName)
+        SQLiteDatabase.openOrCreateDatabase(context.getDatabasePath(fileName), null).use { old ->
+            old.execSQL("CREATE TABLE categories (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, name TEXT NOT NULL, icon TEXT NOT NULL, color TEXT NOT NULL, sortOrder INTEGER NOT NULL, active INTEGER NOT NULL, fallback INTEGER NOT NULL)")
+            old.execSQL("CREATE UNIQUE INDEX index_categories_kind_name ON categories(kind, name)")
+            old.execSQL("CREATE TABLE entries (id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, kind TEXT NOT NULL, cents INTEGER NOT NULL, categoryId INTEGER NOT NULL, date TEXT NOT NULL, note TEXT NOT NULL, createdAt INTEGER NOT NULL, updatedAt INTEGER NOT NULL, deletedAt INTEGER, FOREIGN KEY(categoryId) REFERENCES categories(id) ON UPDATE NO ACTION ON DELETE RESTRICT)")
+            old.execSQL("CREATE INDEX index_entries_categoryId ON entries(categoryId)")
+            old.execSQL("CREATE INDEX index_entries_date ON entries(date)")
+            old.execSQL("INSERT INTO categories VALUES(1, 'EXPENSE', '餐饮', 'food', 'blue', 0, 1, 0)")
+            old.execSQL("INSERT INTO entries VALUES(1, 'EXPENSE', 2800, 1, '2026-10-15', '午餐：牛肉面', 1, 1, NULL)")
+            old.version = 1
+        }
+        open()
+        assertEquals("餐饮", repo.snapshot().categories.single().name)
+        assertEquals("午餐：牛肉面", repo.snapshot().entries.single().note)
+        assertEquals(2800L, repo.snapshot().entries.single().cents)
+        repo.saveAiBatch(UUID.randomUUID().toString(), listOf(EntryDraft(amount = "6", categoryId = 1)))
+        assertEquals(2, repo.snapshot().entries.size)
     }
 }
