@@ -24,7 +24,7 @@ import java.time.ZoneOffset
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SearchScreen(s: LedgerUiState, onChange: ((SearchFilters) -> SearchFilters) -> Unit, onKind: (EntryKind?) -> Unit, onReset: () -> Unit, onEdit: (EntryEntity) -> Unit) {
+fun SearchScreen(s: LedgerUiState, onChange: ((SearchFilters) -> SearchFilters) -> Unit, onKind: (EntryKind?) -> Unit, onReset: () -> Unit, onEdit: (EntryEntity) -> Unit, onInquiry: (() -> Unit)? = null) {
     val filters = s.search
     val rows = remember(s.data, filters) { s.data.search(filters) }
     val categories = s.data.categories.associateBy { it.id }
@@ -33,6 +33,9 @@ fun SearchScreen(s: LedgerUiState, onChange: ((SearchFilters) -> SearchFilters) 
     var categoryMenu by remember { mutableStateOf(false) }
     var dateSide by remember { mutableStateOf<String?>(null) }
     LazyColumn(Modifier.fillMaxSize().imePadding().testTag("search-list"), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if(onInquiry!=null) item {
+            FilledTonalButton(onClick=onInquiry,enabled=!s.busy,modifier=Modifier.fillMaxWidth().testTag("open-inquiry")) { Text("用一句话查账") }
+        }
         item {
             OutlinedTextField(filters.keyword, { value -> onChange { it.copy(keyword = value.take(100)) } },
                 enabled = !s.busy, singleLine = true, label = { Text("搜索备注或分类") }, placeholder = { Text("例如：牛肉面、地铁、某家店") },

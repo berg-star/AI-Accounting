@@ -10,6 +10,7 @@ import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.aiaccounting.ui.AccountingApp
 import com.example.aiaccounting.ui.LedgerViewModel
+import com.example.aiaccounting.ui.inquiry.InquiryViewModel
 import com.example.aiaccounting.ui.theme.AIAccountingTheme
 
 class MainActivity : ComponentActivity() {
@@ -24,7 +25,13 @@ class MainActivity : ComponentActivity() {
                         LedgerViewModel(app.repository, createSavedStateHandle(), app.textAccounting, app.apiKeys, app.recoveryBackups)
                     }
                 })
-                AccountingApp(ledger)
+                val inquiry: InquiryViewModel = viewModel(factory = viewModelFactory {
+                    initializer {
+                        val app = application as AccountingApplication
+                        InquiryViewModel(app.repository, createSavedStateHandle(), app.ledgerInquiry, app.apiKeys)
+                    }
+                })
+                AccountingApp(ledger, inquiry)
             }
         }
     }

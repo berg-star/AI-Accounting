@@ -29,7 +29,7 @@ fun SettingsScreen(enabled: Boolean, onCategories: () -> Unit, onBackup: () -> U
             }
         } } }
         item { Text("备份包含全部分类与记录，包括停用分类和已删除记录。导出的文件包含你的账目，请妥善保存。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant) }
-        item { Text("v0.4.0 · 搜索与备份恢复",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text("导入后先预览，再确认替换账本。恢复前自动保留一份原账本备份。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp)) }
+        item { Text("v0.5.0 · 用一句话查账",style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant);Text("搜索页可进入 AI 查账，本地计算金额，逐笔展示结果并由 AI 复核。",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant,modifier=Modifier.padding(top=8.dp)) }
     }
 }
 

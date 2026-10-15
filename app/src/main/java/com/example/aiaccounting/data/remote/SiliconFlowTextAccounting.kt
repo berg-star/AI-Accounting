@@ -30,11 +30,26 @@ interface SiliconFlowApi {
 }
 
 class SiliconFlowTextAccounting(private val keys: ApiKeyStore, private val api: SiliconFlowApi = createApi()) : TextAccounting {
-    override suspend fun parse(text: String, categories: List<AiCategory>, today: LocalDate): List<EntryDraft> = withContext(Dispatchers.IO) {
+    override suspend fun parse(text: String, categories: List<AiCategory>, today: LocalDate): List<EntryDraft> {
+        require(text.isNotBlank() && text.length <= AiLimits.INPUT_LENGTH) { "请输入 1 至 2000 字的记账内容" }
+        return AiProtocol.response(SiliconFlowCompletion(keys, api).complete(AiProtocol.request(text, categories, today)), categories)
+    }
+
+    companion object {
+        fun createApi(): SiliconFlowApi = Retrofit.Builder().baseUrl("https://api.siliconflow.cn/v1/")
+            .client(OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
+                .callTimeout(60, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
+                .retryOnConnectionFailure(false).build())
+            .build().create(SiliconFlowApi::class.java)
+    }
+}
+
+/** Shared bounded HTTPS transport. Never log credentials, request bodies or provider error bodies. */
+class SiliconFlowCompletion(private val keys: ApiKeyStore, private val api: SiliconFlowApi = SiliconFlowTextAccounting.createApi()) {
+    suspend fun complete(payload: JSONObject): String = withContext(Dispatchers.IO) {
         try {
-            require(text.isNotBlank() && text.length <= AiLimits.INPUT_LENGTH) { "请输入 1 至 2000 字的记账内容" }
             val key = keys.read()?.takeIf { it.isNotBlank() } ?: throw AiFailure("请先在 AI 设置中保存 API Key")
-            val request = AiProtocol.request(text, categories, today).toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+            val request = payload.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
             val response = api.complete("Bearer $key", request)
             if (!response.isSuccessful) {
                 response.errorBody()?.close()
@@ -53,7 +68,7 @@ class SiliconFlowTextAccounting(private val keys: ApiKeyStore, private val api: 
                 if (source.buffer.size > 128 * 1024) throw AiFailure("AI 返回内容过长，请减少一次输入的账目")
                 source.readUtf8()
             } ?: throw AiFailure("AI 返回了空内容，请重试")
-            AiProtocol.response(raw, categories)
+            raw
         } catch (e: CancellationException) { throw e }
         catch (e: AiFailure) { throw e }
         catch (_: SocketTimeoutException) { throw AiFailure("请求超时，输入已保留，可以重试") }
@@ -61,13 +76,6 @@ class SiliconFlowTextAccounting(private val keys: ApiKeyStore, private val api: 
         catch (_: Exception) { throw AiFailure("无法读取 AI 结果或本机密钥，请重试；必要时重新保存 API Key") }
     }
 
-    companion object {
-        fun createApi(): SiliconFlowApi = Retrofit.Builder().baseUrl("https://api.siliconflow.cn/v1/")
-            .client(OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(45, TimeUnit.SECONDS)
-                .callTimeout(60, TimeUnit.SECONDS).followRedirects(false).followSslRedirects(false)
-                .retryOnConnectionFailure(false).build())
-            .build().create(SiliconFlowApi::class.java)
-    }
 }
 
 /** Treat all generated fields as untrusted data; never write to Room here. */

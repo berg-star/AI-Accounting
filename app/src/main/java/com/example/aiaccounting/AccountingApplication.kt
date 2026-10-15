@@ -5,6 +5,8 @@ import com.example.aiaccounting.data.local.LedgerDatabase
 import com.example.aiaccounting.data.repository.LedgerRepository
 import com.example.aiaccounting.data.security.EncryptedApiKeyStore
 import com.example.aiaccounting.data.remote.SiliconFlowTextAccounting
+import com.example.aiaccounting.data.remote.SiliconFlowCompletion
+import com.example.aiaccounting.data.remote.SiliconFlowLedgerInquiry
 import com.example.aiaccounting.data.backup.RecoveryBackupStore
 import java.io.File
 
@@ -13,5 +15,6 @@ class AccountingApplication : Application() {
     val repository by lazy { LedgerRepository(database) }
     val apiKeys by lazy { EncryptedApiKeyStore(this) }
     val textAccounting by lazy { SiliconFlowTextAccounting(apiKeys) }
+    val ledgerInquiry by lazy { SiliconFlowLedgerInquiry(SiliconFlowCompletion(apiKeys)) }
     val recoveryBackups by lazy { RecoveryBackupStore(File(filesDir, "backup-recovery/before-last-restore.json")) }
 }

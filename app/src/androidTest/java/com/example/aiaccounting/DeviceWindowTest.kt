@@ -80,7 +80,12 @@ class DeviceWindowTest {
             }
             screenshot("real-home")
             listOf(Triple("记一笔", "保存这笔记录", "real-keyboard"),
-                Triple("AI 记一笔", "识别账目", "real-ai-keyboard")).forEach { (entryPoint, action, capture) ->
+                Triple("AI 记一笔", "识别账目", "real-ai-keyboard"),
+                Triple("用一句话查账", "开始查账", "real-inquiry-keyboard")).forEach { (entryPoint, action, capture) ->
+            if(entryPoint=="用一句话查账") {
+                tap(textNode("搜索账目")!!)
+                waitFor("Inquiry entry point did not appear") { textNode(entryPoint)!=null }
+            }
             tap(textNode(entryPoint)!!)
             var field:AccessibilityNodeInfo?=null
             waitFor("Editable field not found") {
@@ -126,6 +131,10 @@ class DeviceWindowTest {
                 scenario.onActivity { visible=it.window.decorView.rootWindowInsets?.isVisible(WindowInsets.Type.ime())==true };!visible
             }
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            if(entryPoint=="用一句话查账") {
+                waitFor("Inquiry should return to search") { textNode("用一句话查账")!=null }
+                instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
+            }
             waitFor("Empty draft should return to home") { textNode("记一笔")!=null }
             }
         }

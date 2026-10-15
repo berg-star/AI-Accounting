@@ -16,8 +16,8 @@ android {
         applicationId = "com.example.aiaccounting"
         minSdk = 26
         targetSdk = 36
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -46,6 +46,12 @@ kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
     }
+}
+
+// Explicit on every invocation: a reused Gradle daemon must not enable paid tests.
+tasks.withType<Test>().configureEach {
+    environment("AI_ACCOUNTING_LIVE_INQUIRY", providers.gradleProperty("allowLiveInquiry").orElse("false").get())
+    environment("AI_ACCOUNTING_LIVE_KEY_FILE", providers.gradleProperty("liveKeyFile").orElse("").get())
 }
 
 dependencies {

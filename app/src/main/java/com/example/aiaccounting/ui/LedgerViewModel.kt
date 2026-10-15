@@ -25,7 +25,7 @@ import java.time.YearMonth
 import java.util.UUID
 import java.io.InputStream
 
-enum class Page { HOME, STATISTICS, SETTINGS, ENTRY, CATEGORIES, CATEGORY_EDITOR, AI_INPUT, AI_REVIEW, AI_SETTINGS, SEARCH, BACKUP_PREVIEW }
+enum class Page { HOME, STATISTICS, SETTINGS, ENTRY, CATEGORIES, CATEGORY_EDITOR, AI_INPUT, AI_REVIEW, AI_SETTINGS, SEARCH, BACKUP_PREVIEW, INQUIRY }
 enum class Confirmation { DISCARD_ENTRY, DISCARD_CATEGORY, DELETE_ENTRY, DELETE_CATEGORY, STOP_USED_CATEGORY, CLEAR_API_KEY, DISCARD_AI }
 
 data class LedgerUiState(
@@ -94,7 +94,7 @@ class LedgerViewModel(
             aiEditIndex = saved["aiEditIndex"],
             aiBatchId = saved["aiBatchId"],
             aiSettingsReturn = Page.valueOf(saved["aiSettingsReturn"] ?: Page.SETTINGS.name),
-            entryReturn = if (saved.get<String>("entryReturn") == Page.SEARCH.name) Page.SEARCH else Page.HOME,
+            entryReturn = saved.get<String>("entryReturn")?.let { Page.valueOf(it) }?.takeIf { it in listOf(Page.SEARCH, Page.INQUIRY) } ?: Page.HOME,
             search = SearchFilters(saved["searchKeyword"] ?: "", saved.get<String>("searchKind")?.let { EntryKind.valueOf(it) },
                 saved["searchCategory"], saved["searchFrom"] ?: "", saved["searchTo"] ?: "", saved["searchMin"] ?: "", saved["searchMax"] ?: ""),
         )
@@ -173,7 +173,7 @@ class LedgerViewModel(
     }
     fun editEntry(record: EntryEntity) {
         if (!state.value.busy) {
-            update { it.copy(page = Page.ENTRY, entryReturn = if (it.page == Page.SEARCH) Page.SEARCH else Page.HOME, aiEditIndex = null, error = null,
+            update { it.copy(page = Page.ENTRY, entryReturn = if (it.page in listOf(Page.SEARCH, Page.INQUIRY)) it.page else Page.HOME, aiEditIndex = null, error = null,
                 entry = EntryDraft(record.id, record.kind, Money.input(record.cents), record.categoryId, record.date, record.note)) }
         }
     }
@@ -324,6 +324,7 @@ class LedgerViewModel(
             Page.AI_INPUT, Page.AI_REVIEW -> navigate(Page.HOME)
             Page.AI_SETTINGS -> navigate(s.aiSettingsReturn)
             Page.SEARCH -> navigate(Page.HOME)
+            Page.INQUIRY -> navigate(Page.SEARCH)
             Page.BACKUP_PREVIEW -> { pendingBackup = null; update { it.copy(page = Page.SETTINGS, backupPreview = null, error = null) } }
             Page.HOME -> if (s.filter != null) filterCategory(null)
         }
