@@ -1,4 +1,4 @@
-param([switch]$AllowPaidRequests, [string]$KeyFile)
+param([switch]$AllowPaidRequests, [switch]$Comparison, [string]$KeyFile)
 
 $ErrorActionPreference = 'Stop'
 if (-not $AllowPaidRequests) { throw 'Live API tests use account credits. Re-run with -AllowPaidRequests to enable them.' }
@@ -8,16 +8,18 @@ if (-not (Test-Path -LiteralPath $KeyFile -PathType Leaf)) { throw 'Create the l
 $keyPath = (Resolve-Path -LiteralPath $KeyFile).Path
 if ((Get-Item -LiteralPath $keyPath).Length -eq 0) { throw 'The local Key file is empty. Save the Key as one line and try again.' }
 # Only a file path is passed to Gradle. The JVM reads the credential without logging it.
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build.ps1') ':app:testDebugUnitTest' '--tests' 'com.example.aiaccounting.LiveInquiryJvmTest' '-PallowLiveInquiry=true' "-PliveKeyFile=$keyPath" '--rerun-tasks'
+$testClass = if ($Comparison) { 'com.example.aiaccounting.LiveComparisonJvmTest' } else { 'com.example.aiaccounting.LiveInquiryJvmTest' }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build.ps1') ':app:testDebugUnitTest' '--tests' $testClass '-PallowLiveInquiry=true' "-PliveKeyFile=$keyPath" '--rerun-tasks'
 $buildExit = $LASTEXITCODE
-$savedReport = Join-Path $taskRoot ('.tools\test-results\live-inquiry-local-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+$reportPrefix = if ($Comparison) { 'live-comparison-local-' } else { 'live-inquiry-local-' }
+$savedReport = Join-Path $taskRoot ('.tools\test-results\' + $reportPrefix + (Get-Date -Format 'yyyyMMdd-HHmmss'))
 New-Item -ItemType Directory -Path $savedReport -Force | Out-Null
 foreach ($source in @('app\build\test-results\testDebugUnitTest', 'app\build\reports\tests\testDebugUnitTest')) {
     $sourcePath = Join-Path $taskRoot $source
     if (Test-Path -LiteralPath $sourcePath) { Copy-Item -LiteralPath $sourcePath -Destination (Join-Path $savedReport $(if ($source -like '*\reports\*') { 'html' } else { 'xml' })) -Recurse }
 }
 if ($buildExit -ne 0) { throw "Live API tests failed. Results: $savedReport" }
-$report = Join-Path $taskRoot 'app\build\test-results\testDebugUnitTest\TEST-com.example.aiaccounting.LiveInquiryJvmTest.xml'
+$report = Join-Path $taskRoot "app\build\test-results\testDebugUnitTest\TEST-$testClass.xml"
 [xml]$result = Get-Content -LiteralPath $report -Encoding UTF8 -Raw
-if ([int]$result.testsuite.tests -ne 1 -or [int]$result.testsuite.skipped -ne 0 -or [int]$result.testsuite.failures -ne 0) { throw 'The live API test did not complete successfully.' }
+if ([int]$result.testsuite.tests -ne 1 -or [int]$result.testsuite.skipped -ne 0 -or [int]$result.testsuite.failures -ne 0 -or [int]$result.testsuite.errors -ne 0) { throw 'The live API test did not complete successfully.' }
 Write-Host "Live API tests passed. Synthetic data only; no phone installation or ledger changes. Results: $savedReport"

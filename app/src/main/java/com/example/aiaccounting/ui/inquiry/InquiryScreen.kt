@@ -18,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import com.example.aiaccounting.data.local.EntryEntity
 import com.example.aiaccounting.domain.ai.*
 import com.example.aiaccounting.domain.model.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Unit, onCancel: () -> Unit,
@@ -25,10 +26,28 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
     val keyboard = LocalSoftwareKeyboardController.current
     var exclusion by remember { mutableStateOf<EntryEntity?>(null) }
     var onlyFlagged by rememberSaveable { mutableStateOf(false) }
+    var selectedCategory by rememberSaveable { mutableStateOf<Long?>(null) }
+    var periodFilter by rememberSaveable { mutableIntStateOf(0) }
     val ask = { keyboard?.hide(); onAsk() }
     val result = s.result
+    val comparison = result?.comparison
+    val flags = s.flags.associate { it.entryId to it.reason }
+    val rows = result?.rows.orEmpty().filter { e ->
+        (!onlyFlagged || flags.isEmpty() || e.id in flags) &&
+            (comparison == null || ((selectedCategory == null || e.categoryId == selectedCategory) &&
+                (periodFilter == 0 || (periodFilter == 1 && result.query.inCurrentPeriod(e.date)) || (periodFilter == 2 && result.query.inBaselinePeriod(e.date)))))
+    }
     val listState = rememberLazyListState()
-    LaunchedEffect(result?.query, s.askedQuestion) { if(result!=null)listState.animateScrollToItem(2) }
+    val scope = rememberCoroutineScope()
+    val showCategory: (Long) -> Unit = { id ->
+        selectedCategory = id; periodFilter = 0; onlyFlagged = false
+        val index = 5 + (if(s.error != null) 1 else 0) + (if(s.understanding) 1 else 0) + (if(comparison != null) 2 + comparison.categories.size else 0)
+        scope.launch { listState.animateScrollToItem(index) }
+    }
+    LaunchedEffect(result?.query, s.askedQuestion) {
+        selectedCategory = null; periodFilter = 0; onlyFlagged = false
+        if(result!=null)listState.animateScrollToItem(2)
+    }
     Column(Modifier.fillMaxSize().imePadding()) {
         LazyColumn(Modifier.weight(1f).fillMaxWidth().testTag("inquiry-list"), state=listState, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             item {
@@ -42,13 +61,13 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
             if (result == null && !s.understanding) item {
                 Column {
                     Text("试着问", style = MaterialTheme.typography.labelLarge)
-                    listOf("这个月坐地铁花了多少？", "上个月最大的一笔支出是什么？", "最近七天买咖啡的记录有哪些？").forEach { example ->
+                    listOf("这个月比上个月多花在哪里？", "这个月坐地铁花了多少？", "上个月最大的一笔支出是什么？").forEach { example ->
                         TextButton(onClick = { onQuestion(example) }) { Text(example) }
                     }
                 }
             }
             item {
-                Text("理解问题时发送问题、日期和分类。复核时另发送本次命中记录的日期、金额、分类、备注和本次排除状态，不发送其他历史账目。金额始终由手机计算，AI 复核会消耗账户额度。",
+                Text("理解问题时发送问题、日期和分类。复核另发送本次命中记录的日期、金额、分类、备注和本次排除状态；消费对比还发送两期及分类汇总供 AI 解读。不发送其他历史账目，金额始终由手机计算，AI 请求会消耗额度。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             s.error?.let { error -> item { Text(error, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("inquiry-error")) } }
@@ -64,8 +83,10 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
                                 QueryMetric.COUNT, QueryMetric.LIST -> "${result.included.size} 笔记录"
                                 QueryMetric.MAX -> result.featured.firstOrNull()?.let { "¥ ${Money.format(it.cents)}" } ?: "没有符合条件的记录"
                                 QueryMetric.TOP -> "金额最高的 ${result.featured.size} 笔"
+                                QueryMetric.COMPARE -> differenceText(comparison!!.delta)
                             }
                             Text(main, style = MaterialTheme.typography.headlineMedium, modifier = Modifier.testTag("inquiry-answer"))
+                            if (comparison != null) ComparisonAmounts(result, comparison)
                             Text("命中 ${result.rows.size} 笔 · 纳入 ${result.included.size} 笔 · 本次排除 ${result.excludedIds.size} 笔")
                             if (result.query.metric == QueryMetric.MAX && result.featured.size > 1) Text("最高金额并列 ${result.featured.size} 笔，明细已标出。")
                             if (result.query.metric == QueryMetric.TOP) Text("同金额按日期和记录顺序倒序排列，全部候选明细仍列在下方。")
@@ -78,6 +99,7 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
                     Text("查询范围", style = MaterialTheme.typography.titleMedium)
                     Text(listOfNotNull(
                         if (q.fromDate == null) "全部历史" else "${q.fromDate} 至 ${q.toDate}（含起止日）",
+                        q.baselineFromDate?.let { "对照：$it 至 ${q.baselineToDate}（含起止日），两期筛选条件相同" },
                         q.kind?.label ?: "全部收支",
                         q.categoryIds.takeIf { it.isNotEmpty() }?.joinToString("、", prefix = "分类：") { result.categoryNames[it].orEmpty() },
                         q.keywords.takeIf { it.isNotEmpty() }?.joinToString(" / ", prefix = "备注含任一："),
@@ -92,7 +114,7 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
                             Text("AI 复核", style = MaterialTheme.typography.titleMedium)
                             val status = when (s.reviewStatus) {
                                 ReviewStatus.NOT_STARTED -> "尚未复核"
-                                ReviewStatus.RUNNING -> "正在复核：${s.checked}/${result.rows.size} 笔，${s.completedBatches}/${s.totalBatches} 批"
+                                ReviewStatus.RUNNING -> if (s.explaining) "明细已复核 ${s.checked} 笔，正在解读分类变化…" else "正在复核：${s.checked}/${result.rows.size} 笔，${s.completedBatches}/${s.totalBatches} 批"
                                 ReviewStatus.COMPLETE -> when {
                                     s.flags.isNotEmpty() -> "已复核 ${s.checked} 笔，有 ${s.flags.size} 笔待核对"
                                     s.warnings.isNotEmpty() -> "已复核 ${s.checked} 笔，查询范围有待核对"
@@ -113,19 +135,34 @@ fun InquiryScreen(s: InquiryState, onQuestion: (String) -> Unit, onAsk: () -> Un
                         }
                     }
                 }
-                item {
-                    Text("全部命中明细（${result.rows.size} 笔）", style = MaterialTheme.typography.titleMedium)
+                if (comparison != null) {
+                    item { ComparisonExplanationCard(comparison, s.explanation, s.flags.isNotEmpty() || s.warnings.isNotEmpty(), showCategory) }
+                    item { Text("分类变化（按差额绝对值排序）", style = MaterialTheme.typography.titleMedium) }
+                    items(comparison.categories, key = { "comparison-category-${it.categoryId}" }) { row -> ComparisonCategoryCard(row, showCategory) }
+                }
+                item(key = "inquiry-details") {
+                    Text(if (comparison == null) "全部命中明细（${result.rows.size} 笔）" else "对应明细（${rows.size} / ${result.rows.size} 笔）", style = MaterialTheme.typography.titleMedium)
+                    if (comparison != null) {
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("两期全部", "只看本期", "只看对照").forEachIndexed { index, label ->
+                                FilterChip(selected = periodFilter == index, onClick = { periodFilter = index }, label = { Text(label) }, modifier = Modifier.testTag("comparison-period-$index"))
+                            }
+                        }
+                        selectedCategory?.let { id ->
+                            InputChip(selected = true, onClick = { selectedCategory = null }, label = { Text("${result.categoryNames[id]} · 点击显示全部分类") }, modifier = Modifier.testTag("comparison-category-filter"))
+                        }
+                    }
                     if (s.flags.isNotEmpty()) FilterChip(selected = onlyFlagged, onClick = { onlyFlagged = !onlyFlagged }, label = { Text("只看疑问记录（${s.flags.size}）") })
                 }
                 val featured = result.featured.map { it.id }.toSet()
-                val flags = s.flags.associate { it.entryId to it.reason }
-                val rows = if (onlyFlagged && flags.isNotEmpty()) result.rows.filter { it.id in flags } else result.rows
+                if (rows.isEmpty()) item { Text("当前明细筛选下没有记录。") }
                 items(rows, key = { "inquiry-entry-${it.id}" }) { e ->
                     val excluded = e.id in result.excludedIds
                     Card(onClick = { onEdit(e) }, shape = RoundedCornerShape(18.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         modifier = Modifier.fillMaxWidth().testTag("inquiry-entry-${e.id}")) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("${e.date} · ${result.categoryNames[e.categoryId]}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            if (comparison != null) Text(if(result.query.inCurrentPeriod(e.date)) "本期" else "对照期", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                             Text("${if (e.kind == EntryKind.EXPENSE) "−" else "+"} ¥ ${Money.format(e.cents)}", style = MaterialTheme.typography.titleLarge)
                             Text(e.note.ifBlank { "未填写备注" })
                             if (e.id in featured) Text(if (result.query.metric == QueryMetric.MAX) "最高金额" else "金额前 ${result.query.limit} 笔", color = MaterialTheme.colorScheme.primary)

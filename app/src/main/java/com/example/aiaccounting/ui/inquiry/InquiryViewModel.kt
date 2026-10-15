@@ -30,7 +30,7 @@ class InquiryViewModel(
                     val current = state.value.result!!
                     val refreshed = runCatching { current.query.execute(data, current.excludedIds) }
                     mutable.update { it.copy(result = refreshed.getOrNull(), reviewStatus = ReviewStatus.OUTDATED, checked = 0,
-                        completedBatches = 0, flags = emptyList(), warnings = emptyList(),
+                        completedBatches = 0, flags = emptyList(), warnings = emptyList(), explanation = null, explaining = false,
                         reviewError = "账本已变化，已重新计算，请重新复核", error = if (refreshed.isFailure) "查询分类已变化，请重新查账" else null) }
                 }
                 observed = data
@@ -87,7 +87,7 @@ class InquiryViewModel(
     private suspend fun reviewAll(ticket: Long, question: String, result: QueryResult) {
         val batches = result.rows.chunked(InquiryLimits.BATCH_SIZE).ifEmpty { listOf(emptyList()) }
         mutable.update { it.copy(reviewStatus = ReviewStatus.RUNNING, checked = 0, completedBatches = 0, totalBatches = batches.size,
-            flags = emptyList(), warnings = emptyList(), reviewError = null) }
+            flags = emptyList(), warnings = emptyList(), reviewError = null, explanation = null, explaining = false) }
         try {
             requireKey()
             for (batch in batches) {
@@ -98,10 +98,17 @@ class InquiryViewModel(
                 mutable.update { it.copy(checked = it.checked + batch.size, completedBatches = it.completedBatches + 1,
                     flags = it.flags + review.flags, warnings = (it.warnings + listOfNotNull(review.scopeWarning)).distinct()) }
             }
+            if (result.query.metric == QueryMetric.COMPARE) {
+                ensureActiveQuery(ticket)
+                mutable.update { it.copy(explaining = true) }
+                val explanation = service.explainComparison(question, result)
+                ensureActiveQuery(ticket)
+                mutable.update { it.copy(explanation = explanation, explaining = false) }
+            }
             if (ticket == generation) mutable.update { it.copy(reviewStatus = ReviewStatus.COMPLETE) }
         } catch (e: CancellationException) { throw e }
         catch (e: Exception) {
-            if (ticket == generation) mutable.update { it.copy(reviewStatus = ReviewStatus.FAILED,
+            if (ticket == generation) mutable.update { it.copy(reviewStatus = ReviewStatus.FAILED, explaining = false,
                 reviewError = safeError(e, "AI 复核失败，本地结果仍可查看；未复核部分不视为通过")) }
         }
     }
@@ -117,13 +124,13 @@ class InquiryViewModel(
         cancelWork()
         val ids = if (id in result.excludedIds) result.excludedIds - id else result.excludedIds + id
         mutable.update { it.copy(result = result.copy(excludedIds = ids), reviewStatus = ReviewStatus.OUTDATED,
-            checked = 0, completedBatches = 0, reviewError = "本次统计范围已调整，请重新复核") }
+            checked = 0, completedBatches = 0, explanation = null, explaining = false, reviewError = "本次统计范围已调整，请重新复核") }
     }
 
     fun cancelWork() {
         ++generation
         job?.cancel(); job = null
-        mutable.update { it.copy(understanding = false, reviewStatus = if (it.reviewStatus == ReviewStatus.RUNNING) ReviewStatus.CANCELLED else it.reviewStatus) }
+        mutable.update { it.copy(understanding = false, explaining = false, reviewStatus = if (it.reviewStatus == ReviewStatus.RUNNING) ReviewStatus.CANCELLED else it.reviewStatus) }
     }
 
     fun clear() { cancelWork(); saved["question"] = ""; mutable.value = InquiryState() }
