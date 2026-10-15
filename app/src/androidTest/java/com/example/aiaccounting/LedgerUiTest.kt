@@ -90,7 +90,9 @@ class LedgerUiTest {
         compose.onNodeWithText("分类已保存").onParent().onChildren().filter(hasClickAction()).onFirst().performClick()
         compose.onNodeWithText("吃喝").assertIsDisplayed()
         compose.onNodeWithText("吃喝").performClick()
-        compose.onNodeWithText("停用分类").performScrollTo().assertIsDisplayed().performClick()
+        // On smaller screens LazyColumn has not composed this off-screen item yet.
+        compose.onNode(hasScrollAction()).performScrollToNode(hasText("停用分类"))
+        compose.onNodeWithText("停用分类").assertIsDisplayed().performClick()
         capture("category-stop-result")
         compose.waitUntil(10_000) { vm.state.value.error!=null || (vm.state.value.page==Page.CATEGORIES && vm.state.value.data.categories.none { it.name=="吃喝"&&it.active }) }
         org.junit.Assert.assertNull(vm.state.value.error)

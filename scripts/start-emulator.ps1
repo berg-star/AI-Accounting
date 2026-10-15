@@ -27,6 +27,12 @@ $deadline = (Get-Date).AddMinutes(4)
 do {
     try { $ready = (& adb -s $serial shell getprop sys.boot_completed 2>$null) } catch { $ready = $null }
     if ($ready -eq '1') {
+        # API 31's Bluetooth service crashes with this emulator version.
+        # This dedicated accounting AVD does not test Bluetooth functionality.
+        & adb -s $serial shell svc bluetooth disable
+        & adb -s $serial shell pm disable-user --user 0 com.android.bluetooth
+        if ($LASTEXITCODE -ne 0) { throw 'Could not disable the incompatible Bluetooth service in the test AVD.' }
+        & adb -s $serial shell am force-stop com.android.bluetooth
         & adb -s $serial shell input keyevent 82
         & adb -s $serial shell settings put secure show_ime_with_hard_keyboard 1
         Write-Host "Ready: $serial ($avdName)"

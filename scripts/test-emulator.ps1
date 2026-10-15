@@ -17,10 +17,22 @@ $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 $reportDirectory = Join-Path $projectRoot ".tools\test-results\emulator-$stamp"
 New-Item -ItemType Directory -Path $reportDirectory -Force | Out-Null
 $deviceOutput = "/sdcard/Android/media/com.example.aiaccounting/test-results-$stamp"
-$result = & adb -s $serial shell am instrument -w -r -e timeout_msec 60000 -e additionalTestOutputDir $deviceOutput com.example.aiaccounting.test/androidx.test.runner.AndroidJUnitRunner 2>&1
-$result | Set-Content -LiteralPath (Join-Path $reportDirectory 'instrumentation.txt') -Encoding UTF8
+$stdoutPath = Join-Path $reportDirectory 'instrumentation.txt'
+$stderrPath = Join-Path $reportDirectory 'instrumentation-stderr.txt'
+# Windows PowerShell 5 treats native stderr as a terminating error under Stop.
+# Emulator graphics diagnostics can use stderr even when the tests pass.
+$testProcess = Start-Process -FilePath (Join-Path $env:ANDROID_HOME 'platform-tools\adb.exe') -ArgumentList @('-s', $serial, 'shell', 'am', 'instrument', '-w', '-r', '-e', 'timeout_msec', '60000', '-e', 'additionalTestOutputDir', $deviceOutput, 'com.example.aiaccounting.test/androidx.test.runner.AndroidJUnitRunner') -WindowStyle Hidden -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+# Keep the process handle open so Windows PowerShell can read ExitCode after exit.
+$null = $testProcess.Handle
+if (-not $testProcess.WaitForExit(360000)) {
+    $testProcess.Kill()
+    & adb -s $serial shell am force-stop com.example.aiaccounting
+    throw "Device tests timed out. See $reportDirectory"
+}
+$testProcess.WaitForExit()
+$result = @(Get-Content -LiteralPath $stdoutPath)
 $result | Write-Host
-$instrumentationExit = $LASTEXITCODE
+$instrumentationExit = $testProcess.ExitCode
 & adb -s $serial pull $deviceOutput $reportDirectory
 if ($instrumentationExit -ne 0 -or ($result -join "`n") -notmatch 'OK \(\d+ tests?\)' -or ($result -join "`n") -match '(FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed)') { throw "Device tests failed. See $reportDirectory" }
 & adb -s $serial shell am start -W -n com.example.aiaccounting/.MainActivity

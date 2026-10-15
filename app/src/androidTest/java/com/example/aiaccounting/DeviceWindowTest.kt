@@ -98,10 +98,26 @@ class DeviceWindowTest {
                 }
                 visible
             }
-            val save=textNode("保存这笔记录")
-            assertNotNull("Save button must remain accessible",save)
-            val bounds=Rect();save!!.getBoundsInScreen(bounds)
-            assertTrue("Save button is covered by native keyboard",bounds.bottom<=keyboardTop+2)
+            // IME visibility changes before its animation and Compose layout finish.
+            // Re-read both geometries until the unobscured layout is stable.
+            var previousGeometry:Pair<Int,Int>?=null
+            var stableSamples=0
+            waitFor("Save button is covered by native keyboard") {
+                scenario.onActivity { activity ->
+                    val decor=activity.window.decorView
+                    val insets=decor.rootWindowInsets
+                    visible=insets?.isVisible(WindowInsets.Type.ime())==true
+                    val location=IntArray(2);decor.getLocationOnScreen(location)
+                    keyboardTop=location[1]+decor.height-(insets?.getInsets(WindowInsets.Type.ime())?.bottom?:0)
+                }
+                val bounds=Rect()
+                textNode("保存这笔记录")?.getBoundsInScreen(bounds)
+                val geometry=keyboardTop to bounds.bottom
+                val clear=visible&&bounds.height()>0&&bounds.top>=0&&bounds.bottom<=keyboardTop+2
+                stableSamples=if(clear&&geometry==previousGeometry)stableSamples+1 else 0
+                previousGeometry=geometry
+                stableSamples>=3
+            }
             screenshot("real-keyboard")
             instrumentation.sendKeyDownUpSync(KeyEvent.KEYCODE_BACK)
             waitFor("Keyboard did not close") {

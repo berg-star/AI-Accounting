@@ -91,6 +91,8 @@ v0.2 已在 API 31 真机上通过 5 项自动化测试，并检查实际首页�
 
 ## 电脑上的模拟器测试
 
+已完成 API 31 模拟器环境验收：一键构建、安装、5 项设备测试及测试后 App 启动均通过，详细结果见 [模拟器验证记录](docs/emulator-environment.md)。
+
 无需 Android Studio。首次准备官方模拟器和 Android 12 / API 31 x86_64 镜像：
 
 ```powershell
