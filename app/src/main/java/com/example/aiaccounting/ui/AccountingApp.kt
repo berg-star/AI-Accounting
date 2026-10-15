@@ -34,25 +34,30 @@ import com.example.aiaccounting.ui.settings.BackupPreviewScreen
 import com.example.aiaccounting.ui.search.SearchScreen
 import com.example.aiaccounting.ui.inquiry.*
 import com.example.aiaccounting.ui.statistics.StatisticsScreen
+import com.example.aiaccounting.ui.report.*
 import java.time.LocalDate
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null) {
+fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null, monthly: MonthlyReportViewModel? = null) {
     val s by viewModel.state.collectAsStateWithLifecycle()
     val snackbar=remember { SnackbarHostState() }
     val context=LocalContext.current
     val lifecycle=LocalLifecycleOwner.current
-    DisposableEffect(lifecycle,inquiry) {
-        val observer=androidx.lifecycle.LifecycleEventObserver { _,event -> if(event==Lifecycle.Event.ON_STOP)inquiry?.cancelWork() }
+    DisposableEffect(lifecycle,inquiry,monthly) {
+        val observer=androidx.lifecycle.LifecycleEventObserver { _,event ->
+            if(event==Lifecycle.Event.ON_STOP) { inquiry?.cancelWork(); monthly?.cancelGeneration() }
+            if(event==Lifecycle.Event.ON_START) monthly?.refreshDate()
+        }
         lifecycle.lifecycle.addObserver(observer)
         onDispose { lifecycle.lifecycle.removeObserver(observer) }
     }
     val backup=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null)viewModel.exportBackup(context.contentResolver,uri) }
     val recovery=rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { uri -> if(uri!=null)viewModel.exportBackup(context.contentResolver,uri,recovery=true) }
     val importBackup=rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> if(uri!=null)viewModel.previewBackup(context.contentResolver,uri) }
-    LaunchedEffect(s.restoreRevision) { if(s.restoreRevision>0) { snackbar.currentSnackbarData?.dismiss(); inquiry?.clear() } }
+    LaunchedEffect(s.restoreRevision) { if(s.restoreRevision>0) { snackbar.currentSnackbarData?.dismiss(); inquiry?.clear(); monthly?.clearSavedReports(s.restoreRevision) } }
     LaunchedEffect(s.page) { if(s.page!=Page.INQUIRY)inquiry?.cancelWork() }
+    LaunchedEffect(s.page,s.month) { if(s.page==Page.REPORT)monthly?.selectMonth(s.month) else monthly?.cancelGeneration() }
     LaunchedEffect(viewModel,lifecycle) {
         lifecycle.lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
             viewModel.messages.collect { message ->
@@ -62,7 +67,7 @@ fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null)
             }
         }
     }
-    val sub=s.page in listOf(Page.ENTRY,Page.CATEGORIES,Page.CATEGORY_EDITOR,Page.AI_INPUT,Page.AI_REVIEW,Page.AI_SETTINGS,Page.SEARCH,Page.BACKUP_PREVIEW,Page.INQUIRY)
+    val sub=s.page in listOf(Page.ENTRY,Page.CATEGORIES,Page.CATEGORY_EDITOR,Page.AI_INPUT,Page.AI_REVIEW,Page.AI_SETTINGS,Page.SEARCH,Page.BACKUP_PREVIEW,Page.INQUIRY,Page.REPORT)
     BackHandler(enabled=sub||s.page!=Page.HOME||s.filter!=null||s.busy) { viewModel.back() }
     val title=when(s.page) {
         Page.HOME -> "AI 记账"
@@ -77,6 +82,7 @@ fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null)
         Page.SEARCH -> "搜索账目"
         Page.BACKUP_PREVIEW -> "恢复备份"
         Page.INQUIRY -> "AI 查账"
+        Page.REPORT -> "月度报告"
     }
     Scaffold(
         containerColor=MaterialTheme.colorScheme.background,
@@ -84,7 +90,7 @@ fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null)
             if(s.page==Page.CATEGORIES)IconButton(onClick=viewModel::newCategory,enabled=!s.busy){Icon(Icons.Default.Add,"新增分类")}
             if(s.page==Page.HOME||s.page==Page.STATISTICS)TextButton(onClick=viewModel::openAi,enabled=!s.loading&&!s.busy,modifier=Modifier.testTag("open-ai")){Text("AI 记一笔")}
             if(s.page==Page.HOME)IconButton(onClick=viewModel::openSearch,enabled=!s.busy&&!s.loading,modifier=Modifier.testTag("open-search")){Icon(Icons.Default.Search,"搜索账目")}
-            if(s.page==Page.AI_INPUT||s.page==Page.INQUIRY)TextButton(onClick=viewModel::openAiSettings,enabled=!s.busy,modifier=Modifier.testTag("ai-settings")){Text("AI 设置")}
+            if(s.page==Page.AI_INPUT||s.page==Page.INQUIRY||s.page==Page.REPORT)TextButton(onClick=viewModel::openAiSettings,enabled=!s.busy,modifier=Modifier.testTag("ai-settings")){Text("AI 设置")}
         },colors=TopAppBarDefaults.topAppBarColors(containerColor=MaterialTheme.colorScheme.background)) },
         snackbarHost={ SnackbarHost(snackbar) },
         floatingActionButton={if(!s.loading&&s.data.categories.isNotEmpty()&&(s.page==Page.HOME||s.page==Page.STATISTICS))ExtendedFloatingActionButton(modifier=Modifier.testTag("add-entry").semantics { contentDescription="记一笔" },onClick={if(!s.busy)viewModel.newEntry()},icon={Icon(Icons.Default.Add,null)},text={Text("记一笔")},containerColor=MaterialTheme.colorScheme.primary,contentColor=MaterialTheme.colorScheme.onPrimary)},
@@ -135,7 +141,8 @@ fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null)
                 if(s.page!=Page.ENTRY&&s.page!=Page.CATEGORY_EDITOR)s.error?.let { Surface(color=MaterialTheme.colorScheme.errorContainer,modifier=Modifier.fillMaxWidth()){Text(it,color=MaterialTheme.colorScheme.onErrorContainer,modifier=Modifier.padding(16.dp))} }
                 when(s.page) {
                     Page.HOME -> HomeScreen(s,viewModel::moveMonth,viewModel::setMonth,viewModel::editEntry,{viewModel.filterCategory(null)})
-                    Page.STATISTICS -> StatisticsScreen(s,viewModel::moveMonth,viewModel::setMonth,viewModel::statisticsKind,{viewModel.filterCategory(it)})
+                    Page.STATISTICS -> StatisticsScreen(s,viewModel::moveMonth,viewModel::setMonth,viewModel::statisticsKind,{viewModel.filterCategory(it)},
+                        if(monthly!=null) { {viewModel.navigate(Page.REPORT)} } else null)
                     Page.SETTINGS -> SettingsScreen(!s.busy,viewModel::manageCategories,{backup.launch("ai-accounting-${LocalDate.now()}.json")},viewModel::openAiSettings,
                         {importBackup.launch(arrayOf("*/*"))},s.hasRecoveryBackup,{recovery.launch("ai-accounting-before-restore-${LocalDate.now()}.json")})
                     Page.ENTRY -> EntryScreen(s,viewModel::changeEntry,viewModel::entryKind,viewModel::manageCategories,viewModel::askDeleteEntry)
@@ -150,6 +157,10 @@ fun AccountingApp(viewModel: LedgerViewModel, inquiry: InquiryViewModel? = null)
                     Page.INQUIRY -> inquiry?.let { vm ->
                         val state by vm.state.collectAsStateWithLifecycle()
                         InquiryScreen(state,vm::changeQuestion,vm::ask,vm::cancelWork,vm::retryReview,vm::toggleExcluded) { entry -> vm.cancelWork(); viewModel.editEntry(entry) }
+                    }
+                    Page.REPORT -> monthly?.let { vm ->
+                        val state by vm.state.collectAsStateWithLifecycle()
+                        MonthlyReportScreen(state,viewModel::moveMonth,viewModel::setMonth,vm::generate,vm::cancelGeneration) { entry -> vm.cancelGeneration(); viewModel.editEntry(entry) }
                     }
                 }
             }

@@ -11,6 +11,7 @@ import androidx.lifecycle.viewmodel.viewModelFactory
 import com.example.aiaccounting.ui.AccountingApp
 import com.example.aiaccounting.ui.LedgerViewModel
 import com.example.aiaccounting.ui.inquiry.InquiryViewModel
+import com.example.aiaccounting.ui.report.MonthlyReportViewModel
 import com.example.aiaccounting.ui.theme.AIAccountingTheme
 
 class MainActivity : ComponentActivity() {
@@ -31,7 +32,13 @@ class MainActivity : ComponentActivity() {
                         InquiryViewModel(app.repository, createSavedStateHandle(), app.ledgerInquiry, app.apiKeys)
                     }
                 })
-                AccountingApp(ledger, inquiry)
+                val monthly: MonthlyReportViewModel = viewModel(factory = viewModelFactory {
+                    initializer {
+                        val app = application as AccountingApplication
+                        MonthlyReportViewModel(app.repository, createSavedStateHandle(), app.monthlyReportGenerator, app.apiKeys, app.monthlyReportCache)
+                    }
+                })
+                AccountingApp(ledger, inquiry, monthly)
             }
         }
     }

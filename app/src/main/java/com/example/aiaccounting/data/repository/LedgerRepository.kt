@@ -125,7 +125,7 @@ class LedgerRepository(private val db: LedgerDatabase) {
 
     suspend fun backupJson(): String {
         val data = snapshot()
-        return BackupCodec.encode(data.categories, data.entries, "0.6.0")
+        return BackupCodec.encode(data.categories, data.entries, "0.7.0")
     }
 
     suspend fun restoreBackup(backup: LedgerBackup, preserveCurrent: suspend (String) -> Unit) = db.withTransaction {
