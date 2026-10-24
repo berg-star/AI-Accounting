@@ -50,6 +50,25 @@ class AiProtocolTest {
         }
     }
 
+    @Test fun unfamiliarFeePreservesItsDateAndDetailsWithExpenseFallback() = runBlocking {
+        val server = MockWebServer()
+        server.start()
+        try {
+            // An unknown category must not erase a valid expense or alter its date.
+            server.enqueue(MockResponse().setBody(envelope(listOf(row(amount = "3.50", category = 999,
+                date = "2025-12-31", note = "团费")))))
+            val draft = service(server).parse("昨天交了3.5元团费", categories, LocalDate.of(2026, 1, 1)).single()
+            assertEquals(350L, com.example.aiaccounting.domain.model.Money.parse(draft.amount))
+            assertEquals(EntryKind.EXPENSE, draft.kind)
+            assertEquals(3L, draft.categoryId)
+            assertEquals("2025-12-31", draft.date)
+            assertEquals("团费", draft.note)
+            assertNull(draft.id)
+            val body = JSONObject(server.takeRequest(5, TimeUnit.SECONDS)!!.body.readUtf8())
+            assertEquals("昨天交了3.5元团费", body.getJSONArray("messages").getJSONObject(1).getString("content"))
+        } finally { server.shutdown() }
+    }
+
     @Test fun actualRetrofitRequestDisablesThinkingAndOnlySendsCurrentTextAndCategories() = runBlocking {
         val server = MockWebServer()
         server.start()

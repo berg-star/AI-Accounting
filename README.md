@@ -1,6 +1,8 @@
 # AI 记账
 
-个人使用的 Android 原生 App。v0.7 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，支持本地手动记账、纯文字 AI 记账、历史搜索、备份恢复、一句话查账、消费对比，以及带依据的月度报告。
+个人使用的 Android 原生 App。v0.7.1 使用 Kotlin、Jetpack Compose + Material 3、Room、ViewModel + Coroutines + Flow，支持本地手动记账、纯文字 AI 记账、历史搜索、备份恢复、一句话查账、消费对比，以及带依据的月度报告。
+
+v0.7.1 将 AI 模型切换为硅基流动的 `Qwen/Qwen3-8B`，继续关闭深度思考，并修正已支付费用被漏识别的提示规则。模型当前输入、输出 API 价格为零（核实于 2026-10-25）；以[官方实时价格](https://www.siliconflow.cn/pricing)为准。见[免费模型与费用识别修复](docs/text-ai-fix-v0.7.1.md)。
 
 本版功能见 [月度消费报告](docs/monthly-report-v0.7.md)。此前版本的历史记录见 [一句话对比消费](docs/spending-comparison-v0.6.md)、[一句话查账与 AI 复核](docs/natural-query-v0.5.md)、[初始环境验证](docs/verification.md)、[本地记账验证](docs/verification-v0.2.md)、[文字 AI 记账](docs/text-ai-v0.3.md) 和 [搜索、备份恢复与真机 AI 测试](docs/search-backup-v0.4.md)。
 

@@ -21,5 +21,5 @@ class AiFailure(message: String) : Exception(message)
 object AiLimits {
     const val INPUT_LENGTH = 2000
     const val ENTRIES = 20
-    const val MODEL = "Qwen/Qwen3.5-4B"
+    const val MODEL = "Qwen/Qwen3-8B"
 }

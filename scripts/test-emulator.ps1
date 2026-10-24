@@ -1,4 +1,4 @@
-param([switch]$ShowWindow)
+param([switch]$ShowWindow, [switch]$Offline)
 
 $ErrorActionPreference = 'Stop'
 & (Join-Path $PSScriptRoot 'start-emulator.ps1') -ShowWindow:$ShowWindow
@@ -7,7 +7,9 @@ $serial = 'emulator-5556'
 # All device commands explicitly target this project's AVD, even when a phone is connected.
 $runningName = (& adb -s $serial emu avd name | Select-Object -First 1).Trim()
 if ($runningName -ne 'Accounting_API_31') { throw 'Unexpected emulator; no APK will be installed.' }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build.ps1') ':app:assembleDebug' ':app:assembleDebugAndroidTest' ':app:testDebugUnitTest' ':app:lintDebug'
+$emulatorBuildArguments = @(':app:assembleDebug', ':app:assembleDebugAndroidTest', ':app:testDebugUnitTest', ':app:lintDebug')
+if ($Offline) { $emulatorBuildArguments += '--offline' }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'build.ps1') @emulatorBuildArguments
 if ($LASTEXITCODE -ne 0) { throw 'Build or local checks failed.' }
 & adb -s $serial install -r -t (Join-Path $projectRoot 'app\build\outputs\apk\debug\app-debug.apk')
 if ($LASTEXITCODE -ne 0) { throw 'App installation failed.' }
